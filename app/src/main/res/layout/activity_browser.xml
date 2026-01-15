@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/web_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- พื้นที่ WebView -->
+    <LinearLayout
+        android:id="@+id/web_containers"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/web_container_a"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <WebView android:id="@+id/webview_a" android:layout_width="match_parent" android:layout_height="match_parent" />
+        </LinearLayout>
+
+        <View
+            android:id="@+id/split_handle"
+            android:layout_width="match_parent"
+            android:layout_height="8dp"
+            android:background="#CCCCCC"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/web_container_b"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
+            <WebView android:id="@+id/webview_b" android:layout_width="match_parent" android:layout_height="match_parent" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- แถบทางลัดสคริปต์บนหน้าจอหลัก (กรองเฉพาะที่เปิดตาไว้) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/main_shortcut_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#99FFFFFF"
+        android:padding="4dp"
+        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+        android:orientation="horizontal" />
+
+    <!-- แผงควบคุมหลัก (Floating Menu Panel) -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/floating_menu_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="16dp"
+        android:visibility="gone"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- หัวแถว: ปุ่มปิดแผงควบคุม -->
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="แผงควบคุม"
+                    android:textStyle="bold"
+                    android:layout_centerVertical="true"/>
+                <ImageButton
+                    android:id="@+id/btn_close_panel"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_alignParentEnd="true"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel" />
+            </RelativeLayout>
+
+            <!-- แถวที่ 1: Back, Home, Refresh, URL -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/btn_back"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_media_previous" />
+
+                <ImageButton
+                    android:id="@+id/btn_home"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_today" />
+
+                <ImageButton
+                    android:id="@+id/btn_refresh"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_rotate" />
+
+                <EditText
+                    android:id="@+id/edt_url"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@android:drawable/edit_text"
+                    android:hint="พิมพ์ URL..."
+                    android:imeOptions="actionGo"
+                    android:padding="8dp"
+                    android:singleLine="true"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <!-- แถวที่ 2: ปุ่มเพิ่ม และตั้งค่า -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_add_shortcut"
+                    style="@style/Widget.AppCompat.Button.Small"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+ เพิ่มสคริปต์" />
+
+                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1"/>
+
+                <Button
+                    android:id="@+id/btn_settings"
+                    style="@style/Widget.AppCompat.Button.Borderless"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ตั้งค่าจอ" />
+            </LinearLayout>
+
+            <!-- รายการสคริปต์ในเมนู (มีปุ่มดวงตาแยกแต่ละอัน) -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/menu_shortcut_recycler"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                android:orientation="horizontal" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- ปุ่ม FAB หลัก (ลากได้/Snap ได้) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_main_toggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:src="@android:drawable/ic_dialog_dialer"
+        app:backgroundTint="#2196F3"
+        app:fabSize="normal"
+        app:tint="#FFFFFF" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
