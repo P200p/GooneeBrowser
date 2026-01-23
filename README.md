@@ -1,7 +1,7 @@
 # Goonee Browser
 
 เว็บเบราว์เซอร์สำหรับ Android ที่เน้นความคล่องตัวและการปรับแต่งด้วยสคริปต์ (JavaScript Shortcuts) พร้อมฟีเจอร์แยกหน้าจอ (Split View)
-
+[NotebookLM สำหรับคนไม่ชอบอ่าน](https://notebooklm.google.com/notebook/0a305ab0-817f-4985-b0b4-35aef879e85d)
 ## ฟีเจอร์หลัก (Key Features)
 
 - **ระบบ Multi-tab**: รองรับการเปิดหลายหน้าเว็บพร้อมกัน จัดการแท็บได้ง่ายจากแถบด้านบน
