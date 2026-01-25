@@ -31,7 +31,7 @@
 - หากรันแล้วมี Error จะมีแถบ Snackbar แสดงขึ้นมา 2 วินาที พร้อมปุ่ม **Copy Log** เพื่อนำไปให้ AI ช่วยแก้ไขโค้ดได้ทันที
 
 ## ดาวน์โหลด (Download)
-- [ดาวน์โหลด APK v2.1.1](https://github.com/P200p/GooneeBrowser/releases/download/v2.1.1/Goonee_Browser_v.2.1.1.apk)
+- [ดาวน์โหลด APK v2.1.1](https://github.com/P200p/GooneeBrowser/releases/download/v.2.1.1/Goonee_Browser_v.2.1.1.apk)
 
 ## การติดตั้ง (Installation)
 
