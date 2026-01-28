@@ -6,6 +6,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.view.DragEvent
@@ -24,23 +26,38 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import com.example.myapplication.R
 import com.example.myapplication.databinding.ActivityBrowserBinding
+import com.google.ai.client.generativeai.GenerativeModel
+import com.google.ai.client.generativeai.type.content
 import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
+
+// --- AI Preset for non-dev users ---
+data class AiPreset(
+    val icon: String,
+    val name: String,
+    val prompt: String,
+    val category: String = "general"
+)
 
 data class Shortcut(
     var name: String, 
     var script: String, 
     var isAutoRun: Boolean = false, 
-    var isVisibleOnMain: Boolean = false
+    var isVisibleOnMain: Boolean = false,
+    var icon: String = "🔧",
+    var description: String = ""
 )
 
 data class TabItem(
@@ -63,6 +80,27 @@ class BrowserActivity : AppCompatActivity() {
     private var isDesktopMode = false
     private var textZoom = 100
     
+    // --- New: Simple mode & Sandbox mode for non-dev users ---
+    private var isSimpleMode = false
+    private var isSandboxMode = true  // Default ON for safety
+    private val visitCounts = mutableMapOf<String, Int>()
+    
+    // --- AI Presets for non-dev users ---
+    private val aiPresets = listOf(
+        AiPreset("🚫", "Hide Ads / ซ่อนโฆษณา", 
+            "Create a JavaScript that hides all ads, banners, and sponsored content on the page"),
+        AiPreset("🛠️", "Dev Tools", 
+            "Inject Eruda developer tools from CDN and initialize it"),
+        AiPreset("🌐", "Translate / แปลภาษา", 
+            "Create a script that opens Google Translate for the current page URL"),
+        AiPreset("🌙", "Dark Mode / โหมดมืด", 
+            "Create a script that inverts colors and applies a dark theme to the page"),
+        AiPreset("📖", "Reader Mode / โหมดอ่าน", 
+            "Create a script that removes clutter and makes the page easier to read"),
+        AiPreset("❌", "Remove Popups / ลบ Popup", 
+            "Create a script that removes all popups, modals, overlays and cookie banners")
+    )
+    
     private val shortcuts = mutableListOf<Shortcut>()
     private lateinit var menuAdapter: MenuShortcutAdapter
     private lateinit var mainBarAdapter: MainShortcutAdapter
@@ -74,6 +112,17 @@ class BrowserActivity : AppCompatActivity() {
     private val historyList = mutableListOf<String>()
     private lateinit var historyAdapter: ArrayAdapter<String>
 
+    // --- Gemini AI Setup ---
+    // Note: In a real open source project, NEVER hardcode your API Key.
+    // Use a placeholder or load it from a config file/environment variable.
+    private val GEMINI_API_KEY = "YOUR_API_KEY_HERE"
+    private val generativeModel by lazy {
+        GenerativeModel(
+            modelName = "gemini-1.5-flash",
+            apiKey = GEMINI_API_KEY
+        )
+    }
+
     companion object {
         private const val PREF_NAME = "gooser_settings"
         private const val KEY_HOME_URL = "home_url"
@@ -83,6 +132,12 @@ class BrowserActivity : AppCompatActivity() {
         private const val KEY_CURRENT_TAB_ID = "current_tab_id"
         private const val DEFAULT_HOME = "https://goonee.netlify.app/"
         private const val GOOGLE_SEARCH = "https://www.google.com/search?q="
+        
+        // --- New keys for non-dev features ---
+        private const val KEY_SANDBOX_MODE = "sandbox_mode"
+        private const val KEY_SIMPLE_MODE = "simple_mode"
+        private const val KEY_FIRST_RUN = "first_run"
+        private const val KEY_VISIT_COUNTS = "visit_counts"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -231,6 +286,8 @@ class BrowserActivity : AppCompatActivity() {
             binding.topNavigationBar.visibility = if (isVisible) View.GONE else View.VISIBLE
         }
 
+        binding.btnAskAi.setOnClickListener { showAiGeneratorDialog() }
+
         binding.tabsRecyclerView.setOnDragListener { v, event ->
             when (event.action) {
                 DragEvent.ACTION_DRAG_ENTERED -> { v.alpha = 0.5f; true }
@@ -258,6 +315,231 @@ class BrowserActivity : AppCompatActivity() {
                 else -> true
             }
         }
+    }
+
+    // --- AI Generator Logic (Redesigned for non-dev users) ---
+    private fun showAiGeneratorDialog() {
+        val scroll = ScrollView(this)
+        val mainLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 30, 50, 30)
+        }
+        
+        // Title & Subtitle
+        val titleText = TextView(this).apply {
+            text = "🛠️ AI Tool Builder"
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 10)
+        }
+        val subtitleText = TextView(this).apply {
+            text = "Choose a preset or type your idea\nเลือกจากตัวอย่าง หรือพิมพ์ไอเดียของคุณ"
+            textSize = 14f
+            setPadding(0, 0, 0, 20)
+        }
+        mainLayout.addView(titleText)
+        mainLayout.addView(subtitleText)
+        
+        // Preset Buttons Grid (2 columns)
+        val presetsLabel = TextView(this).apply {
+            text = "📋 Quick Presets / เลือกจากตัวอย่าง"
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 10, 0, 10)
+        }
+        mainLayout.addView(presetsLabel)
+        
+        val gridLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        
+        var dialogRef: AlertDialog? = null
+        
+        // Create rows of 2 buttons each
+        for (i in aiPresets.indices step 2) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { 
+                    bottomMargin = 10 
+                }
+            }
+            
+            // First button
+            val btn1 = Button(this).apply {
+                text = "${aiPresets[i].icon} ${aiPresets[i].name}"
+                textSize = 12f
+                isAllCaps = false
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { 
+                    marginEnd = 5 
+                }
+                setOnClickListener {
+                    dialogRef?.dismiss()
+                    generateAiScript(aiPresets[i].prompt)
+                }
+            }
+            row.addView(btn1)
+            
+            // Second button (if exists)
+            if (i + 1 < aiPresets.size) {
+                val btn2 = Button(this).apply {
+                    text = "${aiPresets[i + 1].icon} ${aiPresets[i + 1].name}"
+                    textSize = 12f
+                    isAllCaps = false
+                    layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { 
+                        marginStart = 5 
+                    }
+                    setOnClickListener {
+                        dialogRef?.dismiss()
+                        generateAiScript(aiPresets[i + 1].prompt)
+                    }
+                }
+                row.addView(btn2)
+            }
+            
+            gridLayout.addView(row)
+        }
+        mainLayout.addView(gridLayout)
+        
+        // Divider
+        val divider = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, 2).apply {
+                topMargin = 20
+                bottomMargin = 20
+            }
+            setBackgroundColor(Color.LTGRAY)
+        }
+        mainLayout.addView(divider)
+        
+        // Free-form input section
+        val customLabel = TextView(this).apply {
+            text = "✍️ Or type your idea / หรือพิมพ์ไอเดีย"
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 10)
+        }
+        mainLayout.addView(customLabel)
+        
+        val inputEdit = EditText(this).apply {
+            hint = "e.g. 'ช่วยให้เว็บนี้ดูง่ายขึ้น' or 'remove sticky headers'"
+            setPadding(30, 30, 30, 30)
+            textSize = 14f
+            minLines = 2
+            setBackgroundResource(android.R.drawable.edit_text)
+        }
+        mainLayout.addView(inputEdit)
+        
+        val generateBtn = Button(this).apply {
+            text = "✨ Generate / เจนสคริปต์"
+            textSize = 14f
+            isAllCaps = false
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = 15
+            }
+            setOnClickListener {
+                val idea = inputEdit.text.toString()
+                if (idea.isNotEmpty()) {
+                    dialogRef?.dismiss()
+                    generateAiScript(idea)
+                } else {
+                    Toast.makeText(this@BrowserActivity, "Please enter your idea / กรุณาใส่ไอเดีย", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        mainLayout.addView(generateBtn)
+        
+        scroll.addView(mainLayout)
+        
+        dialogRef = AlertDialog.Builder(this)
+            .setView(scroll)
+            .setNegativeButton("Close / ปิด", null)
+            .create()
+        dialogRef.show()
+    }
+
+    private fun generateAiScript(idea: String) {
+        val loadingDialog = AlertDialog.Builder(this)
+            .setMessage("เฮีย AI กำลังคิดโค้ดให้คุณ... รอแป๊บนะจ๊ะ")
+            .setCancelable(false)
+            .show()
+
+        lifecycleScope.launch {
+            try {
+                val prompt = """
+                    You are an expert Android WebView JavaScript developer. 
+                    The user wants to create a browser tool with this idea: "$idea".
+                    Please provide a response in JSON format with three fields:
+                    1. "name": A short, catchy name for this tool.
+                    2. "script": The JavaScript code (IIFE format) that performs the action.
+                    3. "explanation": A brief explanation in Thai of how the code works.
+                    
+                    Constraint: If the user asks for 'Devtool' or 'Eruda', provide a script that fetches Eruda from CDN and initializes it.
+                    Only return the JSON.
+                """.trimIndent()
+
+                val response = generativeModel.generateContent(prompt)
+                val jsonText = response.text?.replace("```json", "")?.replace("```", "")?.trim() ?: ""
+                
+                loadingDialog.dismiss()
+                
+                try {
+                    val json = JSONObject(jsonText)
+                    showAiResultDialog(
+                        json.getString("name"),
+                        json.getString("script"),
+                        json.getString("explanation")
+                    )
+                } catch (e: Exception) {
+                    // Fallback if AI doesn't return valid JSON
+                    showAiResultDialog("AI Tool", "alert('AI generated script error')", "ขอโทษทีครับ เฮียเอ๋อไปนิด ลองสั่งใหม่นะ")
+                }
+
+            } catch (e: Exception) {
+                loadingDialog.dismiss()
+                Toast.makeText(this@BrowserActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun showAiResultDialog(name: String, script: String, explanation: String) {
+        val scroll = ScrollView(this)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 20, 50, 20)
+        }
+
+        val expText = TextView(this).apply {
+            text = "💡 คำอธิบาย:\n$explanation"
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 20)
+        }
+        
+        val codeText = TextView(this).apply {
+            text = script
+            setBackgroundColor(Color.LTGRAY)
+            setPadding(20, 20, 20, 20)
+            typeface = Typeface.MONOSPACE
+            textSize = 12f
+        }
+
+        layout.addView(expText)
+        layout.addView(codeText)
+        scroll.addView(layout)
+
+        AlertDialog.Builder(this)
+            .setTitle("AI เขียนเสร็จแล้ว! ($name)")
+            .setView(scroll)
+            .setPositiveButton("เพิ่มลง Shortcut") { _, _ ->
+                shortcuts.add(Shortcut(name, script, isAutoRun = false, isVisibleOnMain = true))
+                saveShortcuts()
+                notifyShortcutChanged()
+                Toast.makeText(this, "เพิ่มเครื่องมือ $name เรียบร้อย!", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("คัดลอกโค้ด") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("AI Script", script))
+                Toast.makeText(this, "คัดลอกลงคลิปบอร์ดแล้ว", Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun addNewTab(url: String) {
