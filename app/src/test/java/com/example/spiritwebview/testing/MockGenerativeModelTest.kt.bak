@@ -1,0 +1,497 @@
+package com.example.spiritwebview.testing
+
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.assertThrows
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
+
+/**
+ * Comprehensive test suite for MockGenerativeModel.
+ * 
+ * This test class validates the mock implementation's ability to simulate
+ * various AI API scenarios including success cases, error conditions, and
+ * edge cases needed for thorough testing of AI functionality.
+ * 
+ * Requirements Coverage:
+ * - 3.1, 3.2, 3.3: API key management and validation
+ * - 4.1-4.6: Network error handling scenarios  
+ * - 5.1-5.5: Safety filter and content restrictions
+ * - Mock interface validation and consistency
+ */
+class MockGenerativeModelTest {
+    
+    // ========== Success Scenario Tests ==========
+    
+    @Test
+    fun `should return successful response with default configuration`() = runTest {
+        val mock = MockGenerativeModel()
+        val response = mock.generateContent("test prompt")
+        
+        assertNotNull(response, "Should return non-null response")
+        assertNotNull(response.text, "Should return response text")
+        assertTrue(response.text!!.contains("Generated Tool"), "Should contain default tool name")
+    }
+    
+    @Test
+    fun `should return configured response for specific prompt`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .addResponse("create ad blocker", MockResponse.createSuccessResponse(
+                name = "Ad Blocker",
+                script = "document.querySelectorAll('[class*=\"ad\"]').forEach(el => el.remove());",
+                explanation = "Removes ads from page"
+            ))
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        val response = mock.generateContent("create ad blocker")
+        
+        assertNotNull(response.text, "Should return response text")
+        assertTrue(response.text!!.contains("Ad Blocker"), "Should contain configured tool name")
+        assertTrue(response.text!!.contains("querySelectorAll"), "Should contain configured script")
+    }
+    
+    @Test
+    fun `should return markdown formatted response`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .setDefaultResponse(MockResponse.createMarkdownResponse())
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        val response = mock.generateContent("any prompt")
+        
+        assertNotNull(response.text, "Should return response text")
+        assertTrue(response.text!!.contains("```json"), "Should contain markdown code block")
+        assertTrue(response.text!!.contains("Here's your JavaScript tool"), "Should contain markdown explanation")
+    }
+    
+    @Test
+    fun `should handle response delay configuration`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .setResponseDelay(200L)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        // Verify the configuration is set correctly
+        assertEquals(200L, config.responseDelay, "Should have configured delay")
+        
+        // The actual delay behavior is tested by the mock implementation
+        val response = mock.generateContent("test")
+        assertNotNull(response, "Should return response even with delay")
+    }
+    
+    // ========== Network Error Tests ==========
+    
+    @Test
+    fun `should throw SocketTimeoutException for timeout simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateNetworkError(NetworkErrorType.TIMEOUT)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        assertThrows<SocketTimeoutException> {
+            mock.generateContent("test prompt")
+        }
+    }
+    
+    @Test
+    fun `should throw UnknownHostException for DNS failure simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateNetworkError(NetworkErrorType.DNS_FAILURE)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        assertThrows<UnknownHostException> {
+            mock.generateContent("test prompt")
+        }
+    }
+    
+    @Test
+    fun `should throw SSLException for SSL error simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateNetworkError(NetworkErrorType.SSL_ERROR)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        assertThrows<SSLException> {
+            mock.generateContent("test prompt")
+        }
+    }
+    
+    @Test
+    fun `should throw IOException for connection refused simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateNetworkError(NetworkErrorType.CONNECTION_REFUSED)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        val exception = assertThrows<IOException> {
+            mock.generateContent("test prompt")
+        }
+        assertTrue(exception.message!!.contains("Connection refused"), "Should have appropriate error message")
+    }
+    
+    // ========== API Key Error Tests ==========
+    
+    @Test
+    fun `should throw IllegalArgumentException for API key error simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateApiKeyError()
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        val exception = assertThrows<IllegalArgumentException> {
+            mock.generateContent("test prompt")
+        }
+        assertTrue(exception.message!!.contains("API key"), "Should mention API key in error message")
+    }
+    
+    // ========== Rate Limiting Tests ==========
+    
+    @Test
+    fun `should throw IOException for rate limit simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateRateLimit()
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        val exception = assertThrows<IOException> {
+            mock.generateContent("test prompt")
+        }
+        assertTrue(exception.message!!.contains("Rate limit"), "Should mention rate limit in error message")
+    }
+    
+    // ========== Safety Filter Tests ==========
+    
+    @Test
+    fun `should throw IllegalArgumentException for safety violation simulation`() = runTest {
+        val config = MockApiConfigurationBuilder()
+            .simulateSafetyViolation()
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        val exception = assertThrows<IllegalArgumentException> {
+            mock.generateContent("dangerous content")
+        }
+        assertTrue(exception.message!!.contains("safety"), "Should mention safety in error message")
+    }
+    
+    // ========== MockResponse Tests ==========
+    
+    @Test
+    fun `should create valid success response`() {
+        val response = MockResponse.createSuccessResponse(
+            name = "Test Tool",
+            script = "console.log('test');",
+            explanation = "A test tool"
+        )
+        
+        assertNotNull(response.text, "Should have response text")
+        assertFalse(response.shouldThrowException, "Should not throw exception")
+        assertTrue(response.text!!.contains("Test Tool"), "Should contain tool name")
+        assertTrue(response.text!!.contains("console.log"), "Should contain script")
+        assertTrue(response.text!!.contains("A test tool"), "Should contain explanation")
+    }
+    
+    @Test
+    fun `should create incomplete response with missing fields`() {
+        val response = MockResponse.createIncompleteResponse(
+            includeName = true,
+            includeScript = false,
+            includeExplanation = true
+        )
+        
+        assertNotNull(response.text, "Should have response text")
+        assertTrue(response.text!!.contains("\"name\""), "Should contain name field")
+        assertFalse(response.text!!.contains("\"script\""), "Should not contain script field")
+        assertTrue(response.text!!.contains("\"explanation\""), "Should contain explanation field")
+    }
+    
+    @Test
+    fun `should create empty fields response`() {
+        val response = MockResponse.createEmptyFieldsResponse()
+        
+        assertNotNull(response.text, "Should have response text")
+        assertTrue(response.text!!.contains("\"name\": \"\""), "Should contain empty name")
+        assertTrue(response.text!!.contains("\"script\": \"\""), "Should contain empty script")
+        assertTrue(response.text!!.contains("\"explanation\": \"\""), "Should contain empty explanation")
+    }
+    
+    @Test
+    fun `should create malformed JSON response`() {
+        val response = MockResponse.createMalformedJsonResponse()
+        
+        assertNotNull(response.text, "Should have response text")
+        // Should contain malformed JSON that will test error handling
+        assertTrue(response.text!!.contains("Malformed"), "Should contain malformed indicator")
+    }
+    
+    @Test
+    fun `should create no JSON response`() {
+        val response = MockResponse.createNoJsonResponse()
+        
+        assertNotNull(response.text, "Should have response text")
+        assertFalse(response.text!!.contains("{"), "Should not contain JSON braces")
+        assertTrue(response.text!!.contains("sorry"), "Should contain apologetic message")
+    }
+    
+    @Test
+    fun `should create multiple JSON response`() {
+        val response = MockResponse.createMultipleJsonResponse()
+        
+        assertNotNull(response.text, "Should have response text")
+        assertTrue(response.text!!.contains("Option 1"), "Should contain first option")
+        assertTrue(response.text!!.contains("Option 2"), "Should contain second option")
+        // Should contain multiple JSON objects for testing first extraction
+        val braceCount = response.text!!.count { it == '{' }
+        assertTrue(braceCount >= 2, "Should contain multiple JSON objects")
+    }
+    
+    @Test
+    fun `should create complex JSON response with nested structures`() {
+        val response = MockResponse.createComplexJsonResponse()
+        
+        assertNotNull(response.text, "Should have response text")
+        assertTrue(response.text!!.contains("metadata"), "Should contain nested metadata")
+        assertTrue(response.text!!.contains("author"), "Should contain nested author")
+        assertTrue(response.text!!.contains("tags"), "Should contain array field")
+        assertTrue(response.text!!.contains("escaped quotes"), "Should contain escaped content")
+    }
+    
+    @Test
+    fun `should create Unicode response with international characters`() {
+        val response = MockResponse.createUnicodeResponse()
+        
+        assertNotNull(response.text, "Should have response text")
+        assertTrue(response.text!!.contains("สวัสดี"), "Should contain Thai characters")
+        assertTrue(response.text!!.contains("🌟"), "Should contain emoji")
+        assertTrue(response.text!!.contains("你好"), "Should contain Chinese characters")
+        assertTrue(response.text!!.contains("こんにちは"), "Should contain Japanese characters")
+        assertTrue(response.text!!.contains("مرحبا"), "Should contain Arabic characters")
+    }
+    
+    // ========== Exception Response Tests ==========
+    
+    @Test
+    fun `should create safety violation exception response`() = runTest {
+        val response = MockResponse.createSafetyViolationResponse()
+        val config = MockApiConfigurationBuilder()
+            .setDefaultResponse(response)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        assertTrue(response.shouldThrowException, "Should be configured to throw exception")
+        assertEquals(ExceptionType.SAFETY, response.exceptionType, "Should be safety exception type")
+        
+        assertThrows<IllegalArgumentException> {
+            mock.generateContent("test")
+        }
+    }
+    
+    @Test
+    fun `should create network error exception response`() = runTest {
+        val response = MockResponse.createNetworkErrorResponse()
+        val config = MockApiConfigurationBuilder()
+            .setDefaultResponse(response)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        assertTrue(response.shouldThrowException, "Should be configured to throw exception")
+        assertEquals(ExceptionType.NETWORK, response.exceptionType, "Should be network exception type")
+        
+        assertThrows<IOException> {
+            mock.generateContent("test")
+        }
+    }
+    
+    @Test
+    fun `should create API key error exception response`() = runTest {
+        val response = MockResponse.createApiKeyErrorResponse()
+        val config = MockApiConfigurationBuilder()
+            .setDefaultResponse(response)
+            .build()
+        
+        val mock = MockGenerativeModel(config)
+        
+        assertTrue(response.shouldThrowException, "Should be configured to throw exception")
+        assertEquals(ExceptionType.API_KEY, response.exceptionType, "Should be API key exception type")
+        
+        assertThrows<IllegalArgumentException> {
+            mock.generateContent("test")
+        }
+    }
+    
+    // ========== Pre-configured Mock Tests ==========
+    
+    @Test
+    fun `should provide successful generation configuration`() = runTest {
+        val config = MockConfigurations.successfulGeneration()
+        val mock = MockGenerativeModel(config)
+        
+        // Test default response
+        val defaultResponse = mock.generateContent("unknown prompt")
+        assertNotNull(defaultResponse.text, "Should return default response")
+        
+        // Test specific configured responses
+        val adBlockerResponse = mock.generateContent("create ad blocker")
+        assertTrue(adBlockerResponse.text!!.contains("Ad Blocker"), "Should return ad blocker tool")
+        
+        val translatorResponse = mock.generateContent("translate page")
+        assertTrue(translatorResponse.text!!.contains("Page Translator"), "Should return translator tool")
+    }
+    
+    @Test
+    fun `should provide network error configuration`() = runTest {
+        val config = MockConfigurations.networkErrors()
+        val mock = MockGenerativeModel(config)
+        
+        assertThrows<SocketTimeoutException> {
+            mock.generateContent("any prompt")
+        }
+    }
+    
+    @Test
+    fun `should provide API key error configuration`() = runTest {
+        val config = MockConfigurations.apiKeyErrors()
+        val mock = MockGenerativeModel(config)
+        
+        assertThrows<IllegalArgumentException> {
+            mock.generateContent("any prompt")
+        }
+    }
+    
+    @Test
+    fun `should provide safety violation configuration`() = runTest {
+        val config = MockConfigurations.safetyViolations()
+        val mock = MockGenerativeModel(config)
+        
+        assertThrows<IllegalArgumentException> {
+            mock.generateContent("any prompt")
+        }
+    }
+    
+    @Test
+    fun `should provide JSON parsing test configuration`() = runTest {
+        val config = MockConfigurations.jsonParsingTests()
+        val mock = MockGenerativeModel(config)
+        
+        // Test different response types
+        val markdownResponse = mock.generateContent("markdown")
+        assertTrue(markdownResponse.text!!.contains("```json"), "Should return markdown response")
+        
+        val incompleteResponse = mock.generateContent("incomplete")
+        assertFalse(incompleteResponse.text!!.contains("\"script\""), "Should return incomplete response")
+        
+        val emptyResponse = mock.generateContent("empty")
+        assertTrue(emptyResponse.text!!.contains("\"name\": \"\""), "Should return empty fields response")
+        
+        val noJsonResponse = mock.generateContent("no_json")
+        assertFalse(noJsonResponse.text!!.contains("{"), "Should return no JSON response")
+        
+        val unicodeResponse = mock.generateContent("unicode")
+        assertTrue(unicodeResponse.text!!.contains("สวัสดี"), "Should return Unicode response")
+    }
+    
+    @Test
+    fun `should provide rate limiting configuration`() = runTest {
+        val config = MockConfigurations.rateLimiting()
+        val mock = MockGenerativeModel(config)
+        
+        val exception = assertThrows<IOException> {
+            mock.generateContent("any prompt")
+        }
+        assertTrue(exception.message!!.contains("Rate limit"), "Should mention rate limiting")
+    }
+    
+    @Test
+    fun `should provide realistic timing configuration`() = runTest {
+        val config = MockConfigurations.realisticTiming()
+        val mock = MockGenerativeModel(config)
+        
+        // Verify the configuration has realistic delay
+        assertEquals(1500L, config.responseDelay, "Should have realistic delay configured")
+        
+        // The actual delay behavior is tested by the mock implementation
+        val response = mock.generateContent("test")
+        assertNotNull(response, "Should return response even with realistic delay")
+        assertNotNull(response.text, "Should return response text")
+    }
+    
+    // ========== Builder Pattern Tests ==========
+    
+    @Test
+    fun `should build configuration with fluent API`() {
+        val config = MockApiConfigurationBuilder()
+            .addResponse("test1", MockResponse.createSuccessResponse("Tool 1"))
+            .addResponse("test2", MockResponse.createSuccessResponse("Tool 2"))
+            .setDefaultResponse(MockResponse.createSuccessResponse("Default Tool"))
+            .setResponseDelay(500L)
+            .simulateNetworkError(NetworkErrorType.TIMEOUT)
+            .simulateApiKeyError()
+            .simulateRateLimit()
+            .simulateSafetyViolation()
+            .build()
+        
+        assertEquals(3, config.responses.size, "Should have 3 configured responses")
+        assertEquals(500L, config.responseDelay, "Should have configured delay")
+        assertTrue(config.simulateNetworkIssues, "Should simulate network issues")
+        assertEquals(NetworkErrorType.TIMEOUT, config.networkErrorType, "Should have timeout error type")
+        assertTrue(config.simulateApiKeyError, "Should simulate API key error")
+        assertTrue(config.simulateRateLimit, "Should simulate rate limit")
+        assertTrue(config.simulateSafetyViolation, "Should simulate safety violation")
+    }
+    
+    // ========== Edge Case Tests ==========
+    
+    @Test
+    fun `should handle empty prompt`() = runTest {
+        val mock = MockGenerativeModel()
+        val response = mock.generateContent("")
+        
+        assertNotNull(response, "Should handle empty prompt")
+        assertNotNull(response.text, "Should return response for empty prompt")
+    }
+    
+    @Test
+    fun `should handle very long prompt`() = runTest {
+        val longPrompt = "x".repeat(10000)
+        val mock = MockGenerativeModel()
+        val response = mock.generateContent(longPrompt)
+        
+        assertNotNull(response, "Should handle long prompt")
+        assertNotNull(response.text, "Should return response for long prompt")
+    }
+    
+    @Test
+    fun `should handle special characters in prompt`() = runTest {
+        val specialPrompt = "Create tool with special chars: !@#$%^&*(){}[]|\\:;\"'<>?,./"
+        val mock = MockGenerativeModel()
+        val response = mock.generateContent(specialPrompt)
+        
+        assertNotNull(response, "Should handle special characters")
+        assertNotNull(response.text, "Should return response for special characters")
+    }
+    
+    @Test
+    fun `should handle Unicode in prompt`() = runTest {
+        val unicodePrompt = "สร้างเครื่องมือ 创建工具 ツールを作成 إنشاء أداة 🚀🌟💻"
+        val mock = MockGenerativeModel()
+        val response = mock.generateContent(unicodePrompt)
+        
+        assertNotNull(response, "Should handle Unicode prompt")
+        assertNotNull(response.text, "Should return response for Unicode prompt")
+    }
+}

@@ -4,50 +4,84 @@ import android.util.Log
 import android.webkit.JavascriptInterface
 import java.lang.ref.WeakReference
 
+@Suppress("unused")
 class AndroidBridge(activity: BrowserActivity) {
     private val activityRef = WeakReference(activity)
-    private val TAG = "AndroidBridge"
+
+    companion object {
+        private const val TAG = "AndroidBridge"
+    }
 
     @JavascriptInterface
     fun navigate(payloadJson: String?) {
         Log.d(TAG, "navigate: $payloadJson")
-        activityRef.get()?.runOnUiThread {
-            activityRef.get()?.navigate(payloadJson ?: "{}")
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            try {
+                activity.navigate(payloadJson ?: "{}")
+            } catch (e: Exception) {
+                Log.e(TAG, "navigate handler failed", e)
+            }
         }
     }
 
     @JavascriptInterface
     fun injectLayers(payloadJson: String?) {
-        activityRef.get()?.runOnUiThread {
-            activityRef.get()?.injectLayers(payloadJson ?: "{}")
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            try {
+                activity.injectLayers(payloadJson ?: "{}")
+            } catch (e: Exception) {
+                Log.e(TAG, "injectLayers handler failed", e)
+            }
         }
     }
 
     @JavascriptInterface
     fun goBack(payloadJson: String?) {
-        activityRef.get()?.runOnUiThread {
-            activityRef.get()?.goBack(payloadJson ?: "{}")
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            try {
+                activity.goBack(payloadJson ?: "{}")
+            } catch (e: Exception) {
+                Log.e(TAG, "goBack handler failed", e)
+            }
         }
     }
 
     @JavascriptInterface
     fun reload(payloadJson: String?) {
-        activityRef.get()?.runOnUiThread {
-            activityRef.get()?.reload(payloadJson ?: "{}")
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            try {
+                activity.reload(payloadJson ?: "{}")
+            } catch (e: Exception) {
+                Log.e(TAG, "reload handler failed", e)
+            }
         }
     }
 
     @JavascriptInterface
     fun toggleSplit(payloadJson: String?) {
-        activityRef.get()?.runOnUiThread {
-            activityRef.get()?.toggleSplit(payloadJson ?: "{}")
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            try {
+                activity.toggleSplit(payloadJson ?: "{}")
+            } catch (e: Exception) {
+                Log.e(TAG, "toggleSplit handler failed", e)
+            }
         }
     }
 
     @JavascriptInterface
     fun setFallback(payloadJson: String?) {
-        activityRef.get()?.runOnUiThread {
-            activityRef.get()?.setFallback(payloadJson ?: "{}")
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            try {
+                activity.setFallback(payloadJson ?: "{}")
+            } catch (e: Exception) {
+                Log.e(TAG, "setFallback handler failed", e)
+            }
         }
     }
 }

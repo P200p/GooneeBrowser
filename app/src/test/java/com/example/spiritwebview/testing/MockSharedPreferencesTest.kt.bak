@@ -1,0 +1,534 @@
+package com.example.spiritwebview.testing
+
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * Comprehensive test suite for MockSharedPreferences functionality.
+ * 
+ * Tests all aspects of the SharedPreferences mock including:
+ * - Basic preference storage and retrieval
+ * - API key management scenarios
+ * - Corruption simulation and recovery
+ * - Editor operations and failure scenarios
+ * - Type safety and edge cases
+ * 
+ * Requirements Coverage:
+ * - 3.1: API key configuration and initialization
+ * - 3.2: API key format validation
+ * - 3.4: API key error handling and user feedback
+ * - 3.5: API key validation success scenarios
+ */
+class MockSharedPreferencesTest {
+
+    // ========== Basic Functionality Tests ==========
+
+    @Test
+    fun `should store and retrieve string preferences correctly`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue("test_key", "test_value")
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertEquals("test_value", prefs.getString("test_key", null))
+        assertEquals("default", prefs.getString("missing_key", "default"))
+    }
+
+    @Test
+    fun `should store and retrieve all preference types correctly`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValues(mapOf(
+                "string_key" to "string_value",
+                "int_key" to 42,
+                "long_key" to 123456789L,
+                "float_key" to 3.14f,
+                "boolean_key" to true,
+                "string_set_key" to mutableSetOf("item1", "item2", "item3")
+            ))
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertEquals("string_value", prefs.getString("string_key", null))
+        assertEquals(42, prefs.getInt("int_key", 0))
+        assertEquals(123456789L, prefs.getLong("long_key", 0L))
+        assertEquals(3.14f, prefs.getFloat("float_key", 0f))
+        assertTrue(prefs.getBoolean("boolean_key", false))
+        assertEquals(setOf("item1", "item2", "item3"), prefs.getStringSet("string_set_key", null))
+    }
+
+    @Test
+    fun `should handle contains() method correctly`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue("existing_key", "value")
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertTrue(prefs.contains("existing_key"))
+        assertFalse(prefs.contains("missing_key"))
+    }
+
+    @Test
+    fun `should return all preferences correctly`() {
+        val initialValues = mapOf(
+            "key1" to "value1",
+            "key2" to 42,
+            "key3" to true
+        )
+        
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValues(initialValues)
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        val allPrefs = prefs.getAll()
+        
+        assertEquals(3, allPrefs.size)
+        assertEquals("value1", allPrefs["key1"])
+        assertEquals(42, allPrefs["key2"])
+        assertEquals(true, allPrefs["key3"])
+    }
+
+    // ========== API Key Management Tests ==========
+
+    @Test
+    fun `should handle valid API key storage and retrieval`() {
+        val config = MockConfigurations.validApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val apiKey = prefs.getString("gemini_api_key", "")
+        assertNotNull(apiKey)
+        assertTrue(apiKey.isNotEmpty())
+        assertTrue(apiKey.startsWith("AIzaSy"))
+    }
+
+    @Test
+    fun `should handle missing API key scenario`() {
+        val config = MockConfigurations.missingApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val apiKey = prefs.getString("gemini_api_key", "")
+        assertEquals("", apiKey)
+        assertFalse(prefs.contains("gemini_api_key"))
+    }
+
+    @Test
+    fun `should handle empty API key scenario`() {
+        val config = MockConfigurations.emptyApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val apiKey = prefs.getString("gemini_api_key", null)
+        assertEquals("", apiKey)
+        assertTrue(prefs.contains("gemini_api_key"))
+    }
+
+    @Test
+    fun `should handle malformed API key scenario`() {
+        val config = MockConfigurations.malformedApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val apiKey = prefs.getString("gemini_api_key", "")
+        assertEquals("invalid-key-format", apiKey)
+        // This would be caught by validation logic in the actual application
+        assertFalse(apiKey.startsWith("AIzaSy"))
+    }
+
+    // ========== Corruption Simulation Tests ==========
+
+    @Test
+    fun `should throw exception for corrupted preferences when configured`() {
+        val config = MockConfigurations.corruptedPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        assertThrows<RuntimeException> {
+            prefs.getString("gemini_api_key", "")
+        }
+        
+        assertThrows<RuntimeException> {
+            prefs.contains("gemini_api_key")
+        }
+        
+        assertThrows<RuntimeException> {
+            prefs.getAll()
+        }
+    }
+
+    @Test
+    fun `should return default values for corrupted preferences when configured`() {
+        val config = MockConfigurations.corruptedPreferencesWithFallback()
+        val prefs = MockSharedPreferences(config)
+        
+        val apiKey = prefs.getString("gemini_api_key", "default_key")
+        assertEquals("default_key", apiKey)
+        
+        assertFalse(prefs.contains("gemini_api_key"))
+    }
+
+    @Test
+    fun `should return corrupted data when configured`() {
+        val config = MockConfigurations.corruptedPreferencesWithBadData()
+        val prefs = MockSharedPreferences(config)
+        
+        val apiKey = prefs.getString("gemini_api_key", "default")
+        assertNotNull(apiKey)
+        assertTrue(apiKey.startsWith("CORRUPTED_DATA_"))
+        
+        // For boolean corruption, should return opposite
+        val sandboxMode = prefs.getBoolean("sandbox_mode", true)
+        // Since sandbox_mode is not in corrupted keys, should return normal value
+        assertTrue(sandboxMode)
+    }
+
+    @Test
+    fun `should handle corruption recovery`() {
+        val config = MockConfigurations.corruptedPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        // Initially corrupted
+        assertThrows<RuntimeException> {
+            prefs.getString("gemini_api_key", "")
+        }
+        
+        // Simulate recovery
+        prefs.simulateCorruptionRecovery()
+        
+        // Should work normally after recovery
+        val apiKey = prefs.getString("gemini_api_key", "")
+        assertEquals("AIzaSyValidKey123", apiKey)
+    }
+
+    @Test
+    fun `should handle selective corruption affecting only specific keys`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValues(mapOf(
+                "gemini_api_key" to "AIzaSyValidKey123",
+                "sandbox_mode" to true,
+                "simple_mode" to false
+            ))
+            .simulateCorruption(CorruptionBehavior.THROW_EXCEPTION)
+            .addCorruptedKeys("gemini_api_key") // Only API key is corrupted
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        // API key should throw exception
+        assertThrows<RuntimeException> {
+            prefs.getString("gemini_api_key", "")
+        }
+        
+        // Other preferences should work normally
+        assertTrue(prefs.getBoolean("sandbox_mode", false))
+        assertFalse(prefs.getBoolean("simple_mode", true))
+    }
+
+    // ========== Editor Operation Tests ==========
+
+    @Test
+    fun `should handle successful editor operations`() {
+        val config = MockConfigurations.validApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val editor = prefs.edit()
+        editor.putString("new_key", "new_value")
+        editor.putInt("int_key", 100)
+        editor.putBoolean("bool_key", true)
+        
+        assertTrue(editor.commit())
+        
+        assertEquals("new_value", prefs.getString("new_key", null))
+        assertEquals(100, prefs.getInt("int_key", 0))
+        assertTrue(prefs.getBoolean("bool_key", false))
+    }
+
+    @Test
+    fun `should handle editor apply operations`() {
+        val config = MockConfigurations.validApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val editor = prefs.edit()
+        editor.putString("apply_key", "apply_value")
+        editor.apply() // Should not throw
+        
+        assertEquals("apply_value", prefs.getString("apply_key", null))
+    }
+
+    @Test
+    fun `should handle editor remove operations`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue("remove_me", "value")
+            .addInitialValue("keep_me", "value")
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertTrue(prefs.contains("remove_me"))
+        assertTrue(prefs.contains("keep_me"))
+        
+        val editor = prefs.edit()
+        editor.remove("remove_me")
+        assertTrue(editor.commit())
+        
+        assertFalse(prefs.contains("remove_me"))
+        assertTrue(prefs.contains("keep_me"))
+    }
+
+    @Test
+    fun `should handle editor clear operations`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValues(mapOf(
+                "key1" to "value1",
+                "key2" to "value2",
+                "key3" to "value3"
+            ))
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertEquals(3, prefs.getAll().size)
+        
+        val editor = prefs.edit()
+        editor.clear()
+        assertTrue(editor.commit())
+        
+        assertEquals(0, prefs.getAll().size)
+    }
+
+    @Test
+    fun `should handle editor write failures`() {
+        val config = MockConfigurations.writeFailurePreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val editor = prefs.edit()
+        editor.putString("test_key", "test_value")
+        assertTrue(editor.commit()) // Commit succeeds but write was ignored
+        
+        // Value should not be stored due to write failure
+        assertNull(prefs.getString("test_key", null))
+    }
+
+    @Test
+    fun `should handle editor commit failures`() {
+        val config = MockConfigurations.commitFailurePreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val editor = prefs.edit()
+        editor.putString("test_key", "test_value")
+        assertFalse(editor.commit()) // Should return false
+        
+        // Value should not be stored due to commit failure
+        assertNull(prefs.getString("test_key", null))
+    }
+
+    @Test
+    fun `should handle editor apply failures`() {
+        val config = MockConfigurations.applyFailurePreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        val editor = prefs.edit()
+        editor.putString("test_key", "test_value")
+        editor.apply() // Should not throw but should not apply changes
+        
+        // Value should not be stored due to apply failure
+        assertNull(prefs.getString("test_key", null))
+    }
+
+    // ========== Complex Scenario Tests ==========
+
+    @Test
+    fun `should handle complete application preferences state`() {
+        val config = MockConfigurations.completeApplicationPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        // Verify all expected preferences are present
+        assertEquals("AIzaSyCompleteValidApiKey123456789", prefs.getString("gemini_api_key", ""))
+        assertEquals("https://goonee.netlify.app/", prefs.getString("home_url", ""))
+        assertTrue(prefs.getBoolean("sandbox_mode", false))
+        assertFalse(prefs.getBoolean("simple_mode", true))
+        assertFalse(prefs.getBoolean("first_run", true))
+        
+        // Verify JSON strings are stored correctly
+        val shortcuts = prefs.getString("saved_shortcuts", "")
+        assertTrue(shortcuts.contains("Test"))
+        
+        val history = prefs.getString("url_history", "")
+        assertTrue(history.contains("https://example.com"))
+    }
+
+    @Test
+    fun `should handle first run scenario`() {
+        val config = MockConfigurations.firstRunPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        assertTrue(prefs.getBoolean("first_run", false))
+        assertEquals("", prefs.getString("gemini_api_key", ""))
+        assertTrue(prefs.getBoolean("sandbox_mode", false))
+        assertFalse(prefs.getBoolean("simple_mode", true))
+    }
+
+    @Test
+    fun `should handle API key setup workflow`() {
+        val config = MockConfigurations.missingApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        // Initially no API key
+        assertEquals("", prefs.getString("gemini_api_key", ""))
+        
+        // Simulate user setting API key
+        val editor = prefs.edit()
+        editor.putString("gemini_api_key", "AIzaSyNewUserApiKey123456789")
+        assertTrue(editor.commit())
+        
+        // Verify API key is now set
+        assertEquals("AIzaSyNewUserApiKey123456789", prefs.getString("gemini_api_key", ""))
+        assertTrue(prefs.contains("gemini_api_key"))
+    }
+
+    @Test
+    fun `should handle preference migration scenario`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValues(mapOf(
+                "old_api_key" to "AIzaSyOldKey123",
+                "sandbox_mode" to true
+            ))
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        // Simulate migration: copy old key to new key and remove old
+        val oldKey = prefs.getString("old_api_key", "")
+        
+        val editor = prefs.edit()
+        editor.putString("gemini_api_key", oldKey)
+        editor.remove("old_api_key")
+        assertTrue(editor.commit())
+        
+        // Verify migration
+        assertEquals("AIzaSyOldKey123", prefs.getString("gemini_api_key", ""))
+        assertFalse(prefs.contains("old_api_key"))
+    }
+
+    // ========== Edge Case Tests ==========
+
+    @Test
+    fun `should handle null keys gracefully`() {
+        val config = MockConfigurations.validApiKeyPreferences()
+        val prefs = MockSharedPreferences(config)
+        
+        // Should not crash with null keys
+        assertNull(prefs.getString(null, "default"))
+        assertEquals(0, prefs.getInt(null, 0))
+        assertFalse(prefs.getBoolean(null, false))
+        assertFalse(prefs.contains(null))
+        
+        val editor = prefs.edit()
+        editor.putString(null, "value") // Should be ignored
+        assertTrue(editor.commit())
+    }
+
+    @Test
+    fun `should handle empty string keys`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue("", "empty_key_value")
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertEquals("empty_key_value", prefs.getString("", null))
+        assertTrue(prefs.contains(""))
+    }
+
+    @Test
+    fun `should handle very long preference values`() {
+        val longValue = "x".repeat(10000)
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue("long_key", longValue)
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertEquals(longValue, prefs.getString("long_key", null))
+        assertEquals(10000, prefs.getString("long_key", "")!!.length)
+    }
+
+    @Test
+    fun `should handle special characters in keys and values`() {
+        val specialKey = "key_with_特殊字符_🔑"
+        val specialValue = "value_with_特殊字符_and_emoji_🌟_and_quotes_\"test\""
+        
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue(specialKey, specialValue)
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        assertEquals(specialValue, prefs.getString(specialKey, null))
+        assertTrue(prefs.contains(specialKey))
+    }
+
+    // ========== Performance and Timing Tests ==========
+
+    @Test
+    fun `should handle slow preference operations`() = runTest {
+        val config = MockConfigurations.slowPreferenceOperations()
+        val prefs = MockSharedPreferences(config)
+        
+        val startTime = System.currentTimeMillis()
+        
+        val editor = prefs.edit()
+        editor.putString("slow_key", "slow_value")
+        assertTrue(editor.commit()) // Should take ~1000ms
+        
+        val endTime = System.currentTimeMillis()
+        val duration = endTime - startTime
+        
+        // Should have taken at least the configured delay
+        assertTrue(duration >= 1000, "Operation should have taken at least 1000ms, took ${duration}ms")
+        
+        assertEquals("slow_value", prefs.getString("slow_key", null))
+    }
+
+    // ========== Utility Method Tests ==========
+
+    @Test
+    fun `should provide access to current preferences for testing`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValues(mapOf(
+                "key1" to "value1",
+                "key2" to 42
+            ))
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        val currentPrefs = prefs.getCurrentPreferences()
+        
+        assertEquals(2, currentPrefs.size)
+        assertEquals("value1", currentPrefs["key1"])
+        assertEquals(42, currentPrefs["key2"])
+    }
+
+    @Test
+    fun `should allow manual corruption triggering for testing`() {
+        val config = MockPreferencesConfigurationBuilder()
+            .addInitialValue("test_key", "test_value")
+            .build()
+        
+        val prefs = MockSharedPreferences(config)
+        
+        // Initially should work
+        assertEquals("test_value", prefs.getString("test_key", null))
+        
+        // Trigger corruption
+        prefs.simulateCorruption()
+        
+        // Now should be corrupted (but since no keys are marked as corrupted, should still work)
+        assertEquals("test_value", prefs.getString("test_key", null))
+    }
+}

@@ -1,0 +1,211 @@
+GooneeBrowser Non-Dev UX Enhancement Plan
+ปรับปรุง GooneeBrowser ให้ non-developer สามารถใช้งานได้อย่างมั่นใจ โดยยังคงพลังของฟีเจอร์เดิมไว้ครบถ้วน
+
+User Review Required
+IMPORTANT
+
+Scope Clarification Needed: This is a significant UI/UX overhaul with 5 phases. Should I implement all phases in one go, or would you prefer to proceed phase-by-phase for better review?
+
+WARNING
+
+String Resources: Current 
+strings.xml
+ only has app_name. All new UI text will be added with both Thai and English support. Please confirm if multi-language is required or Thai-only is sufficient.
+
+Proposed Changes
+Phase 1: AI Tool Builder 🧠
+[MODIFY] 
+BrowserActivity.kt
+1.1 Add Preset Prompts Data Class
+
+data class AiPreset(
+    val icon: String,
+    val name: String,
+    val nameTh: String,
+    val prompt: String,
+    val category: String
+)
+1.2 Create Default Presets
+
+"ซ่อนโฆษณา" → Hide ads script
+"เปิดเครื่องมือ Dev" → Inject Eruda
+"แปลหน้านี้" → Open translate
+"โหมดอ่าน" → Readability.js
+"ดาร์คโหมด" → Dark theme
+1.3 Redesign 
+showAiGeneratorDialog()
+
+Add preset buttons grid at top
+Keep free-form input as secondary option
+Change title to "🛠️ AI Tool Builder"
+[MODIFY] 
+strings.xml
+Add all UI strings for internationalization:
+
+<string name="ai_tool_builder">AI Tool Builder</string>
+<string name="ai_tool_builder_th">เครื่องมือ AI</string>
+<string name="preset_hide_ads">ซ่อนโฆษณา</string>
+<string name="preset_dev_tools">เปิดเครื่องมือ Dev</string>
+<!-- etc. -->
+Phase 2: Smart Shortcut System 🧩
+[MODIFY] 
+BrowserActivity.kt
+2.1 Update Shortcut Data Class
+
+data class Shortcut(
+    var name: String, 
+    var script: String, 
+    var isAutoRun: Boolean = false, 
+-   var isVisibleOnMain: Boolean = false
++   var isVisibleOnMain: Boolean = false,
++   var icon: String = "🔧",
++   var description: String = "",
++   var category: String = "custom"
+)
+2.2 Rename UI Labels
+
+"Shortcuts" → "เครื่องมือของฉัน"
+"+ Add" → "+ สร้างเครื่องมือ"
+2.3 Add Preview/Trial Button
+
+New "ทดลองก่อนใช้" button in 
+showAiResultDialog()
+Executes script temporarily without saving
+[MODIFY] 
+activity_browser.xml
+Update panel header text and add icons to shortcut items:
+
+<TextView
+-   android:text="Shortcuts"
++   android:text="เครื่องมือของฉัน"
+    android:textStyle="bold" />
+Phase 3: Sandbox Mode 🧼
+[MODIFY] 
+BrowserActivity.kt
+3.1 Add Sandbox Preferences
+
+companion object {
+    // existing...
+    private const val KEY_SANDBOX_MODE = "sandbox_mode"
+    private const val KEY_SIMPLE_MODE = "simple_mode"
+}
+3.2 Create Script Explanation Dialog New function showScriptExplanationDialog(script: String, explanation: String):
+
+Shows human-readable explanation
+"ดูว่าโค้ดทำอะไร" button expands to show technical details
+Requires explicit "ยืนยันใช้" button to execute
+3.3 Modify 
+executeShortcut()
+
+private fun executeShortcut(shortcut: Shortcut) {
+    if (isSandboxMode && !shortcut.isTrusted) {
+        showSandboxConfirmDialog(shortcut)
+    } else {
+        actuallyExecuteShortcut(shortcut)
+    }
+}
+Phase 4: Simple Theme & Onboarding 🎨
+[MODIFY] 
+BrowserActivity.kt
+4.1 Add Simple Mode Logic
+
+private var isSimpleMode = false
+private fun applySimpleMode(enabled: Boolean) {
+    isSimpleMode = enabled
+    // Hide: Split mode button, settings, main shortcut bar
+    binding.btnSplitMode.visibility = if (enabled) View.GONE else View.VISIBLE
+    binding.mainShortcutBar.visibility = if (enabled) View.GONE else View.VISIBLE
+    // Show only essential buttons
+}
+4.2 Create Onboarding Dialog New function showOnboardingDialog():
+
+Previous
+Next
+Question 1: "คุณอยากให้เบราว์เซอร์ช่วยอะไรบ้าง?"
+
+
+ ซ่อนโฆษณา
+
+ อ่านง่ายขึ้น
+
+ แปลภาษา
+
+ ดาร์คโหมด
+
+4.3 Add First-Run Check
+
+private fun checkFirstRun() {
+    if (prefs.getBoolean("first_run", true)) {
+        showOnboardingDialog()
+        prefs.edit().putBoolean("first_run", false).apply()
+    }
+}
+Phase 5: Behavior-Based Suggestions 🧭
+[MODIFY] 
+BrowserActivity.kt
+5.1 Add Visit Tracking
+
+private val visitCounts = mutableMapOf<String, Int>()
+private const val KEY_VISIT_COUNTS = "visit_counts"
+private fun trackVisit(url: String) {
+    val domain = Uri.parse(url).host ?: return
+    val count = visitCounts.getOrDefault(domain, 0) + 1
+    visitCounts[domain] = count
+    
+    if (count >= 5 && domain != getCurrentHomeDomain()) {
+        suggestSetAsHome(domain)
+    }
+}
+5.2 Create Suggestion Snackbar
+
+private fun suggestSetAsHome(domain: String) {
+    Snackbar.make(
+        binding.root,
+        "คุณเข้า $domain บ่อยมาก ตั้งเป็นหน้าแรกไหม?",
+        Snackbar.LENGTH_LONG
+    ).setAction("ตั้งเลย") {
+        prefs.edit().putString(KEY_HOME_URL, "https://$domain").apply()
+    }.show()
+}
+Verification Plan
+Manual Verification (User Testing)
+NOTE
+
+Since this is an Android app, verification requires building and running on a device/emulator.
+
+Step 1: Build the App
+
+cd d:\workspec\GooneeBrowser
+.\gradlew assembleDebug
+Step 2: Install on Device/Emulator
+
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+Step 3: Test Matrix
+
+Test	Steps	Expected Result
+AI Presets	1. Tap FAB → "✨ Goonee AI"
+2. See preset buttons	Preset grid shows: ซ่อนโฆษณา, Dev Tools, etc.
+Free-form AI	1. In AI dialog, tap "ลองพูดดู"
+2. Type "ช่วยซ่อน popup"	AI generates script with preview
+Preview Script	1. Generate script
+2. Tap "ทดลองก่อนใช้"	Script runs but isn't saved
+Sandbox Mode	1. Enable sandbox in settings
+2. Run any shortcut	Confirmation dialog appears first
+Onboarding	1. Clear app data
+2. Launch app	Onboarding dialog asks preferences
+Home Suggestion	1. Visit same site 5+ times
+2. Check for Snackbar	"ตั้งเป็นหน้าแรกไหม?" appears
+Simple Mode	1. Toggle "โหมดเรียบง่าย" in settings	Dev buttons hidden, UI simplified
+Implementation Order
+Phase 1: AI Tool Builder (~30 min) - Core improvement
+Phase 2: Smart Shortcuts (~20 min) - Depends on Phase 1
+Phase 4: Onboarding (~15 min) - Uses presets from Phase 1
+Phase 3: Sandbox Mode (~15 min) - Can be done independently
+Phase 5: Suggestions (~10 min) - Simplest addition
+Estimated Total: ~90 minutes of implementation time
+
+Please review and let me know:
+
+Should all phases be implemented, or specific phases only?
+Is Thai-only UI acceptable, or do you need English strings too?
+Any specific presets or tool suggestions you'd like to add?

@@ -7,6 +7,7 @@
     <string name="ai_tool_builder_subtitle">Create browser tools with AI / สร้างเครื่องมือด้วย AI</string>
     <string name="ai_generating">AI is thinking… / AI กำลังคิด…</string>
     <string name="ai_done">AI Generated! / AI สร้างเสร็จแล้ว!</string>
+    <string name="ai_done_format">AI Tool Created: %1$s / สร้างเครื่องมือเสร็จแล้ว: %1$s</string>
     <string name="try_speaking">Type your idea / พิมพ์ไอเดียของคุณ</string>
     <string name="or_choose_preset">Or choose a preset / หรือเลือกจากตัวอย่าง</string>
     <string name="generate">Generate / เจน</string>
@@ -16,6 +17,7 @@
     <string name="copy_code">Copy Code / คัดลอก</string>
     
     <!-- Presets -->
+    <string name="preset_format">%1$s %2$s</string>
     <string name="preset_hide_ads">Hide Ads / ซ่อนโฆษณา</string>
     <string name="preset_dev_tools">Dev Tools</string>
     <string name="preset_translate">Translate / แปลภาษา</string>
@@ -31,6 +33,7 @@
     <string name="tool_name">Tool Name / ชื่อเครื่องมือ</string>
     <string name="tool_script">JavaScript Code</string>
     <string name="auto_run">Auto-run / รันอัตโนมัติ</string>
+    <string name="auto_run_format">[Auto] %1$s</string>
     <string name="run_success">Run success! / รันสำเร็จ!</string>
     <string name="script_error">Script Error!</string>
     
@@ -39,7 +42,8 @@
     <string name="what_does_this_do">What does this do? / ดูว่าโค้ดทำอะไร</string>
     <string name="confirm_run">Confirm Run / ยืนยันใช้</string>
     <string name="script_explanation">Explanation / คำอธิบาย</string>
-    
+    <string name="explanation_format">Explanation: %1$s / คำอธิบาย: %1$s</string>
+
     <!-- Simple Mode -->
     <string name="simple_mode">Simple Mode / โหมดเรียบง่าย</string>
     <string name="simple_mode_desc">Hide advanced features / ซ่อนฟีเจอร์ขั้นสูง</string>
@@ -53,19 +57,27 @@
     <string name="settings">Settings / ตั้งค่า</string>
     <string name="desktop_mode">Desktop Mode / โหมดเดสท็อป</string>
     <string name="text_size">Text Size / ขนาดตัวอักษร</string>
+    <string name="text_zoom_format">Text Zoom: %1$d%% / ขยายตัวอักษร: %1$d%%</string>
     <string name="split_mode">Split Mode / แบ่งหน้าจอ</string>
     <string name="toggle_orientation">Toggle Orientation / สลับแนว</string>
     <string name="set_home">Set Home URL / ตั้งค่าหน้าแรก</string>
     <string name="guide">Guide / วิธีใช้</string>
     <string name="saved">Saved! / บันทึกแล้ว!</string>
-    
+    <string name="api_key_setting">Gemini API Key</string>
+    <string name="api_key_hint">Enter your Gemini API Key</string>
+    <string name="no_api_key_error">Please set your API Key in Settings / กรุณาใส่ API Key ในหน้าตั้งค่า</string>
+    <string name="api_key_required_title">API Key Required / จำเป็นต้องใช้ API Key</string>
+    <string name="api_key_instructions">To use AI features, you need a Gemini API Key.\n1. Go to Google AI Studio\n2. Click \'Get API key\'\n3. Copy and paste it here.\n\nในการใช้งาน AI คุณต้องมี Gemini API Key\n1. ไปที่ Google AI Studio\n2. กด \'Get API key\'\n3. คัดลอกมาวางที่นี่</string>
+    <string name="get_api_key_now">Get API Key / รับ API Key</string>
+    <string name="test_and_save">Test and Save / ทดสอบและบันทึก</string>
+
     <!-- Suggestions -->
-    <string name="suggest_set_home">You visit %s often. Set as home? / คุณเข้า %s บ่อย ตั้งเป็นหน้าแรกไหม?</string>
+    <string name="suggest_set_home">You visit %1$s often on %2$s. Set as home? / คุณเข้า %1$s บ่อยบน %2$s ตั้งเป็นหน้าแรกไหม?</string>
     <string name="set_now">Set Now / ตั้งเลย</string>
     
     <!-- Tabs -->
     <string name="close_tab">Close Tab / ปิดแท็บ</string>
-    <string name="close_tab_confirm">Close tab \'%s\'? / ปิดแท็บ \'%s\' ใช่ไหม?</string>
+    <string name="close_tab_confirm">Close tab \'%1$s\' in %2$s? / ปิดแท็บ \'%1$s\' ใน %2$s ใช่ไหม?</string>
     <string name="close">Close / ปิด</string>
     <string name="min_one_tab">Need at least 1 tab / ต้องมีอย่างน้อย 1 แท็บ</string>
 </resources>

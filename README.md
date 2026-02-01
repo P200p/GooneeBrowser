@@ -2,59 +2,50 @@
 
 [ภาษาไทยด้านล่าง]
 
-Goonee Browser is a high-performance, open-source Android browser designed for power users, developers, and those who love customization. It features a unique split-screen mode, a robust JavaScript shortcut system, and an integrated AI assistant.
+Goonee Browser is a high-performance Android browser built for everyone. Whether you're a power user or just someone who wants a smarter browsing experience, Goonee provides the tools you need—powered by AI.
 
 ## ✨ Key Features
 
-- **Dual WebView (Split Mode):** Browse two websites simultaneously with vertical or horizontal splitting.
-- **Goonee AI Assistant:** Integrated Google Gemini AI that generates custom JavaScript tools based on your ideas.
-- **Advanced Shortcuts:** Save and run custom scripts (JS) to automate web tasks, remove ads, or inject tools like Eruda.
-- **Smart Tabs:** Persistence system that remembers your open tabs across sessions.
-- **Modern UI:** Clean, floating navigation system with drag-and-drop support.
-- **Privacy & Customization:** Easy access to Desktop Mode, Text Zoom, and Home URL settings.
+- **Split Screen (2 หน้าจอ):** Browse two websites at once. Watch a video while reading news, or compare prices side-by-side.
+- **AI Tool Builder (เครื่องมือ AI):** Want a special feature? Just ask! Our AI assistant can create custom tools for you (like ad blockers or dark mode) even if you don't know how to code.
+- **My Tools (เครื่องมือของฉัน):** Save your favorite AI-generated features and run them with one tap to enhance any website.
+- **Smart Tab System:** Never lose your work. Your tabs are saved and restored automatically every time you open the app.
+- **Modern & Flexible UI:** Floating menus and drag-and-drop support make navigation smooth and intuitive.
+- **Privacy & Ease of Use:** Toggle Desktop Mode, adjust text size, or set your favorite Home page in seconds.
 
-## 🛠 Tech Stack
+## 🛠 Tech Stack (For Developers)
 
 - **Kotlin** & Android SDK
-- **View Binding** for efficient UI management
-- **Google Generative AI SDK** (Gemini 1.5 Flash)
-- **RecyclerView** for Tabs and Shortcuts
+- **View Binding** for clean UI code
+- **Google Generative AI SDK** (Multi-model support)
+- **Shared Preferences** for persistence
 
 ---
 
 # Goonee Browser 🚀 (ภาษาไทย)
 
-Goonee Browser คือเบราว์เซอร์แอนดรอยด์แบบโอเพ่นซอส ประสิทธิภาพสูง ที่ออกแบบมาเพื่อผู้ใช้ระดับสูง (Power Users) นักพัฒนา และผู้ที่รักการปรับแต่ง มาพร้อมฟีเจอร์แบ่งหน้าจอ ระบบชอร์ตคัต JavaScript และผู้ช่วย AI ในตัว
+Goonee Browser คือเบราว์เซอร์แอนดรอยด์ที่ออกแบบมาเพื่อทุกคน ไม่ว่าคุณจะเป็นผู้ใช้ทั่วไปหรือนักพัฒนา Goonee มอบประสบการณ์การท่องเว็บที่ฉลาดกว่าเดิมด้วยขุมพลังของ AI
 
 ## ✨ ฟีเจอร์เด่น
 
-- **โหมด 2 หน้าจอ (Split Mode):** ท่องเว็บสองหน้าพร้อมกันได้ทั้งแนวตั้งและแนวนอน
-- **Goonee AI Assistant:** เชื่อมต่อกับ Google Gemini AI เพื่อเขียนสคริปต์ JavaScript ตามไอเดียที่คุณสั่ง
-- **ระบบชอร์ตคัตขั้นสูง:** บันทึกและรันสคริปต์ JS เพื่อสั่งงานอัตโนมัติ ลบโฆษณา หรือเรียกใช้เครื่องมืออย่าง Eruda
-- **แท็บอัจฉริยะ:** ระบบจดจำแท็บที่เปิดค้างไว้ แม้จะปิดแอปไปแล้ว
-- **ดีไซน์ทันสมัย:** เมนูแบบลอย (Floating) ใช้งานง่าย รองรับการลากและวาง (Drag & Drop)
-- **ความเป็นส่วนตัวและการปรับแต่ง:** ตั้งค่าโหมดเดสท็อป, ขยายตัวอักษร และตั้งค่าหน้าแรกได้ตามใจ
-
-## 🛠 ข้อมูลทางเทคนิค
-
-- พัฒนาด้วย **Kotlin** และ Android SDK
-- ใช้ **View Binding** ในการจัดการ UI
-- เชื่อมต่อ **Google Generative AI SDK** (Gemini 1.5 Flash)
-- ใช้ **RecyclerView** ในการจัดการระบบแท็บและชอร์ตคัต
+- **โหมด 2 หน้าจอ (Split Mode):** เปิดเว็บสองหน้าพร้อมกัน จะดู YouTube พร้อมอ่านข่าว หรือเปรียบเทียบราคาสินค้าก็ทำได้ง่ายๆ
+- **AI Tool Builder (เครื่องมือ AI):** อยากได้ฟีเจอร์อะไรเพิ่ม? แค่บอก AI! ระบบสามารถสร้างเครื่องมือพิเศษให้คุณ (เช่น ปุ่มซ่อนโฆษณา หรือโหมดอ่านง่าย) โดยที่คุณไม่ต้องเขียนโค้ดเป็น
+- **เครื่องมือของฉัน (My Tools):** บันทึกสคริปต์หรือฟีเจอร์ที่ AI สร้างไว้เรียกใช้งานได้ทันทีในคลิกเดียว
+- **ระบบแท็บอัจฉริยะ:** ไม่ต้องกลัวงานหาย แอปจะจดจำแท็บที่เปิดค้างไว้ให้โดยอัตโนมัติ
+- **ดีไซน์ทันสมัย:** เมนูแบบลอยตัว (Floating) ใช้งานง่าย และรองรับการลากและวาง (Drag & Drop)
+- **ตั้งค่าง่าย:** สลับโหมดเดสท็อป, ขยายตัวอักษร หรือตั้งหน้าแรกได้ตามใจชอบ
 
 ---
 
-## 🚀 How to build / วิธีการรัน
+## 🚀 How to Get Started / วิธีเริ่มใช้งาน
 
-1. Clone this repository.
-2. Get your **Gemini API Key** from [Google AI Studio](https://aistudio.google.com/).
-3. Paste your API key in `BrowserActivity.kt` at `GEMINI_API_KEY`.
-4. Build and Run on Android Studio.
-
-5. Clone โปรเจคนี้ลงเครื่อง
-6. รับ **Gemini API Key** จาก [Google AI Studio](https://aistudio.google.com/)
-7. นำคีย์ไปใส่ใน `BrowserActivity.kt` ตรงตัวแปร `GEMINI_API_KEY`
-8. สั่ง Build และ Run ผ่าน Android Studio ได้เลย
+1. **Install & Open:** Build the project using Android Studio.
+2. **Setup AI:**
+   - Go to **Settings** (ตั้งค่า) > **Gemini AI Settings**.
+   - Get your free API Key from [Google AI Studio](https://aistudio.google.com/).
+   - Paste the key, tap **Fetch Models**, and select a model (e.g., `gemini-1.5-flash`).
+   - Tap **Save and Test**—once it says verified, you're ready!
+3. **Start Creating:** Tap the **AI button** on the main screen and tell the AI what you want to do with the current website!
 
 ---
-**Open Source with Love by Goonee Team**
+**Open Source with Love by Goonee' Team**
