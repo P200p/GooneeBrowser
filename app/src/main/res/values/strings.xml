@@ -80,4 +80,11 @@
     <string name="close_tab_confirm">Close tab \'%1$s\' in %2$s? / ปิดแท็บ \'%1$s\' ใน %2$s ใช่ไหม?</string>
     <string name="close">Close / ปิด</string>
     <string name="min_one_tab">Need at least 1 tab / ต้องมีอย่างน้อย 1 แท็บ</string>
+
+    <!-- Multi-Model Support -->
+    <string name="fetch_models">Fetch Models / ดึงรายการโมเดล</string>
+    <string name="select_model">Select Model / เลือกโมเดล</string>
+    <string name="fetching_models">Fetching models… / กำลังดึงโมเดล…</string>
+    <string name="fetch_models_error">Failed to fetch models: %1$s / ดึงโมเดลไม่สำเร็จ: %1$s</string>
+    <string name="no_models_found">No models found / ไม่พบโมเดล</string>
 </resources>

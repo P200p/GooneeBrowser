@@ -10,7 +10,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
+import android.text.TextUtils
+import android.util.Log
 import android.view.DragEvent
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -31,18 +34,30 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.edit
+import androidx.core.net.toUri
+import androidx.core.view.isGone
+import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import com.example.myapplication.R
 import com.example.myapplication.databinding.ActivityBrowserBinding
 import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.content
+import com.google.ai.client.generativeai.type.BlockThreshold
+import com.google.ai.client.generativeai.type.HarmCategory
+import com.google.ai.client.generativeai.type.SafetySetting
+import com.google.ai.client.generativeai.type.generationConfig
 import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.abs
 
 // --- AI Preset for non-dev users ---
@@ -59,7 +74,8 @@ data class Shortcut(
     var isAutoRun: Boolean = false, 
     var isVisibleOnMain: Boolean = false,
     var icon: String = "🔧",
-    var description: String = ""
+    var description: String = "",
+    var isTrusted: Boolean = false
 )
 
 data class TabItem(
@@ -82,12 +98,10 @@ class BrowserActivity : AppCompatActivity() {
     private var isDesktopMode = false
     private var textZoom = 100
     
-    // --- New: Simple mode & Sandbox mode for non-dev users ---
     private var isSimpleMode = false
-    private var isSandboxMode = true  // Default ON for safety
+    private var isSandboxMode = true
     private val visitCounts = mutableMapOf<String, Int>()
     
-    // --- AI Presets for non-dev users ---
     private val aiPresets = listOf(
         AiPreset("🚫", "Hide Ads / ซ่อนโฆษณา", 
             "Create a JavaScript that hides all ads, banners, and sponsored content on the page"),
@@ -114,11 +128,80 @@ class BrowserActivity : AppCompatActivity() {
     private val historyList = mutableListOf<String>()
     private lateinit var historyAdapter: ArrayAdapter<String>
 
-    // --- Gemini AI Setup ---
-    private fun getGenerativeModel(): GenerativeModel {
+    private var _generativeModel: GenerativeModel? = null
+    private fun getGenerativeModel(forceNew: Boolean = false): GenerativeModel? {
         val apiKey = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
-        val modelName = prefs.getString(KEY_GEMINI_MODEL, "gemini-1.5-flash") ?: "gemini-1.5-flash"
-        return GenerativeModel(modelName = modelName, apiKey = apiKey)
+        if (apiKey.isEmpty()) return null
+        val modelName = prefs.getString(KEY_GEMINI_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
+        if (_generativeModel == null || forceNew) {
+            val config = generationConfig {
+                responseMimeType = "application/json"
+            }
+            val safetySettings = listOf(
+                SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.ONLY_HIGH),
+                SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.ONLY_HIGH),
+                SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.ONLY_HIGH),
+                SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.ONLY_HIGH)
+            )
+            _generativeModel = GenerativeModel(
+                modelName = modelName, 
+                apiKey = apiKey,
+                generationConfig = config,
+                safetySettings = safetySettings
+            )
+        }
+        return _generativeModel
+    }
+
+    private suspend fun fetchAvailableModels(apiKey: String): List<String> {
+        return withContext(Dispatchers.IO) {
+            var connection: HttpURLConnection? = null
+            try {
+                // Try v1beta first as it contains most recent preview models
+                val url = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+                connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 5000
+                
+                val responseCode = connection.responseCode
+                if (responseCode == 200) {
+                    val text = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(text)
+                    val modelsArray = json.optJSONArray("models") ?: return@withContext emptyList<String>()
+                    val modelNames = mutableListOf<String>()
+                    
+                    for (i in 0 until modelsArray.length()) {
+                        val model = modelsArray.getJSONObject(i)
+                        val name = model.getString("name").substringAfter("/")
+                        val supportedActions = model.optJSONArray("supportedActions")
+                        
+                        var canGenerate = false
+                        if (supportedActions != null) {
+                            for (j in 0 until supportedActions.length()) {
+                                if (supportedActions.getString(j) == "generateContent") {
+                                    canGenerate = true; break
+                                }
+                            }
+                        } else {
+                            // Fallback: assume if it's a gemini model, it can generate content
+                            if (name.contains("gemini", ignoreCase = true)) canGenerate = true
+                        }
+                        
+                        if (canGenerate) modelNames.add(name)
+                    }
+                    modelNames.distinct().sortedDescending()
+                } else {
+                    val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                    Log.e("GooneeAI", "Server returned $responseCode: $errorText")
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                Log.e("GooneeAI", "Network error while fetching models", e)
+                emptyList()
+            } finally {
+                connection?.disconnect()
+            }
+        }
     }
 
     companion object {
@@ -131,15 +214,13 @@ class BrowserActivity : AppCompatActivity() {
         private const val DEFAULT_HOME = "https://goonee.netlify.app/"
         private const val GOOGLE_SEARCH = "https://www.google.com/search?q="
         
-        // --- New keys for non-dev features ---
         private const val KEY_SANDBOX_MODE = "sandbox_mode"
         private const val KEY_SIMPLE_MODE = "simple_mode"
         private const val KEY_FIRST_RUN = "first_run"
         private const val KEY_VISIT_COUNTS = "visit_counts"
-        
-        // --- Gemini Keys ---
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
-        private const val KEY_GEMINI_MODEL = "gemini_model_name"
+        private const val KEY_GEMINI_MODEL = "gemini_model"
+        private const val DEFAULT_MODEL = "gemini-1.5-flash"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -147,7 +228,9 @@ class BrowserActivity : AppCompatActivity() {
         binding = ActivityBrowserBinding.inflate(layoutInflater)
         setContentView(binding.root)
         
-        prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+        isSandboxMode = prefs.getBoolean(KEY_SANDBOX_MODE, true)
+        isSimpleMode = prefs.getBoolean(KEY_SIMPLE_MODE, false)
 
         webViewA = binding.webviewA
         webViewB = binding.webviewB
@@ -161,6 +244,7 @@ class BrowserActivity : AppCompatActivity() {
         loadShortcuts()
         loadHistory()
         loadTabs()
+        loadVisitCounts()
 
         val startUrl = if (tabsList.isNotEmpty()) {
             tabsList.find { it.id == currentTabId }?.url ?: tabsList.first().url
@@ -175,6 +259,60 @@ class BrowserActivity : AppCompatActivity() {
         loadUrl(startUrl)
         showSingle()
         setupSplitter()
+        applySimpleMode(isSimpleMode)
+        checkFirstRun()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val currentWebView = getWebViewForTab(activeTab)
+                if (currentWebView.canGoBack()) {
+                    currentWebView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
+
+    private fun checkFirstRun() {
+        if (prefs.getBoolean(KEY_FIRST_RUN, true)) {
+            showOnboardingDialog()
+            prefs.edit { putBoolean(KEY_FIRST_RUN, false) }
+        }
+    }
+
+    private fun showOnboardingDialog() {
+        val options = aiPresets.map { "${it.icon} ${it.name}" }.toTypedArray()
+        val checkedItems = BooleanArray(options.size) { false }
+        
+        AlertDialog.Builder(this)
+            .setTitle(R.string.onboarding_title)
+            .setMessage(R.string.onboarding_question)
+            .setMultiChoiceItems(options, checkedItems) { _, which, isChecked ->
+                checkedItems[which] = isChecked
+            }
+            .setPositiveButton(R.string.onboarding_done) { _, _ ->
+                for (i in checkedItems.indices) {
+                    if (checkedItems[i]) {
+                        val preset = aiPresets[i]
+                        shortcuts.add(Shortcut(preset.name, "/* AI Preset */", isAutoRun = false, isVisibleOnMain = true, icon = preset.icon, isTrusted = true))
+                    }
+                }
+                saveShortcuts()
+                notifyShortcutChanged()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun applySimpleMode(enabled: Boolean) {
+        isSimpleMode = enabled
+        prefs.edit { putBoolean(KEY_SIMPLE_MODE, enabled) }
+        
+        binding.btnSplitMode.isVisible = !enabled
+        binding.mainShortcutBar.isVisible = !enabled
+        binding.btnFullscreenMode.isVisible = !enabled
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -192,14 +330,7 @@ class BrowserActivity : AppCompatActivity() {
                         val text = item.text?.toString() ?: item.uri?.toString()
                         if (!text.isNullOrEmpty()) {
                             val input = text.trim()
-                            val urlToLoad = if (isValidUrl(input)) {
-                                if (!input.startsWith("http")) "https://$input" else input
-                            } else if (input.startsWith("http://") || input.startsWith("https://") || 
-                                       input.startsWith("content://") || input.startsWith("file://")) {
-                                input
-                            } else {
-                                GOOGLE_SEARCH + input
-                            }
+                            val urlToLoad = prepareUrl(input)
                             binding.edtUrl.setText(urlToLoad)
                             loadUrl(urlToLoad)
                         }
@@ -225,8 +356,8 @@ class BrowserActivity : AppCompatActivity() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (abs(event.rawX - startX) < 10 && abs(event.rawY - startY) < 10) {
-                        if (binding.topNavigationBar.visibility == View.GONE) {
-                            binding.topNavigationBar.visibility = View.VISIBLE
+                        if (binding.topNavigationBar.isGone) {
+                            binding.topNavigationBar.isVisible = true
                         } else {
                             togglePanel(true)
                         }
@@ -235,6 +366,7 @@ class BrowserActivity : AppCompatActivity() {
                         val targetX = if (event.rawX < screenWidth / 2) 16f else screenWidth - v.width - 16f
                         v.animate().x(targetX).setDuration(200).start()
                     }
+                    v.performClick()
                     true
                 }
                 else -> false
@@ -269,11 +401,7 @@ class BrowserActivity : AppCompatActivity() {
         binding.edtUrl.setOnEditorActionListener { v, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_GO || (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER)) {
                 val input = v.text.toString()
-                val urlToLoad = if (isValidUrl(input)) {
-                    if (!input.startsWith("http")) "https://$input" else input
-                } else {
-                    GOOGLE_SEARCH + input
-                }
+                val urlToLoad = prepareUrl(input)
                 addToHistory(urlToLoad)
                 loadUrl(urlToLoad)
                 true
@@ -284,11 +412,16 @@ class BrowserActivity : AppCompatActivity() {
         binding.btnSettings.setOnClickListener { showSettingsDialog() }
         binding.btnSplitMode.setOnClickListener { toggleSplit() }
         binding.btnFullscreenMode.setOnClickListener {
-            val isVisible = binding.topNavigationBar.visibility == View.VISIBLE
-            binding.topNavigationBar.visibility = if (isVisible) View.GONE else View.VISIBLE
+            binding.topNavigationBar.isVisible = !binding.topNavigationBar.isVisible
         }
 
-        binding.btnAskAi.setOnClickListener { showAiGeneratorDialog() }
+        binding.btnAskAi.setOnClickListener { 
+            if (prefs.getString(KEY_GEMINI_API_KEY, "").isNullOrEmpty()) {
+                showApiKeySetupDialog { showAiGeneratorDialog() }
+            } else {
+                showAiGeneratorDialog()
+            }
+        }
 
         binding.tabsRecyclerView.setOnDragListener { v, event ->
             when (event.action) {
@@ -301,14 +434,7 @@ class BrowserActivity : AppCompatActivity() {
                         val text = item.text?.toString() ?: item.uri?.toString()
                         if (!text.isNullOrEmpty()) {
                             val input = text.trim()
-                            val urlToLoad = if (isValidUrl(input)) {
-                                if (!input.startsWith("http")) "https://$input" else input
-                            } else if (input.startsWith("http://") || input.startsWith("https://") || 
-                                       input.startsWith("content://") || input.startsWith("file://")) {
-                                input
-                            } else {
-                                GOOGLE_SEARCH + input
-                            }
+                            val urlToLoad = prepareUrl(input)
                             addNewTab(urlToLoad)
                         }
                     }
@@ -319,7 +445,149 @@ class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    // --- AI Generator Logic (Redesigned for non-dev users) ---
+    private fun prepareUrl(input: String): String {
+        return if (isValidUrl(input)) {
+            if (!input.startsWith("http")) "https://$input" else input
+        } else if (input.startsWith("http://") || input.startsWith("https://") || 
+                   input.startsWith("content://") || input.startsWith("file://")) {
+            input
+        } else {
+            GOOGLE_SEARCH + input
+        }
+    }
+
+    private fun showApiKeySetupDialog(onSuccess: () -> Unit) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(60, 40, 60, 40)
+        }
+
+        val tvInstructions = TextView(this).apply {
+            text = getString(R.string.api_key_instructions)
+            setPadding(0, 0, 0, 30)
+        }
+        layout.addView(tvInstructions)
+
+        val btnGetLink = Button(this).apply {
+            text = getString(R.string.get_api_key_now)
+            setOnClickListener {
+                startActivity(Intent(Intent.ACTION_VIEW, "https://aistudio.google.com/app/apikey".toUri()))
+            }
+        }
+        layout.addView(btnGetLink)
+
+        val input = EditText(this).apply {
+            hint = getString(R.string.api_key_hint)
+            setText(prefs.getString(KEY_GEMINI_API_KEY, ""))
+            setPadding(20, 20, 20, 10)
+            setBackgroundResource(android.R.drawable.edit_text)
+        }
+        layout.addView(input)
+
+        val btnFetch = Button(this).apply {
+            text = getString(R.string.fetch_models)
+            isAllCaps = false
+        }
+        layout.addView(btnFetch)
+
+        val tvModelLabel = TextView(this).apply {
+            text = getString(R.string.select_model)
+            setPadding(0, 20, 0, 0)
+            isVisible = false
+        }
+        layout.addView(tvModelLabel)
+
+        val modelSpinner = Spinner(this).apply {
+            setPadding(0, 10, 0, 20)
+            isVisible = false
+        }
+        layout.addView(modelSpinner)
+
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            isVisible = false
+        }
+        layout.addView(progress)
+
+        btnFetch.setOnClickListener {
+            val key = input.text.toString().trim()
+            if (key.isEmpty()) {
+                Toast.makeText(this, R.string.no_api_key_error, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            lifecycleScope.launch {
+                progress.isVisible = true
+                val models = fetchAvailableModels(key)
+                progress.isVisible = false
+                if (models.isNotEmpty()) {
+                    val adapter = ArrayAdapter(this@BrowserActivity, android.R.layout.simple_spinner_dropdown_item, models)
+                    modelSpinner.adapter = adapter
+                    modelSpinner.isVisible = true
+                    tvModelLabel.isVisible = true
+                    // Try to pre-select current model
+                    val current = prefs.getString(KEY_GEMINI_MODEL, DEFAULT_MODEL)
+                    val idx = models.indexOf(current)
+                    if (idx >= 0) modelSpinner.setSelection(idx)
+                } else {
+                    Toast.makeText(this@BrowserActivity, getString(R.string.fetch_models_error, "Invalid Key or Network Error"), Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.api_key_required_title)
+            .setView(layout)
+            .setPositiveButton(R.string.test_and_save, null)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+
+        dialog.setOnShowListener {
+            val button = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            button.setOnClickListener {
+                val key = input.text.toString().trim()
+                val selectedModel = if (modelSpinner.isVisible) modelSpinner.selectedItem?.toString() ?: DEFAULT_MODEL else DEFAULT_MODEL
+                
+                if (key.isNotEmpty()) {
+                    testApiKey(key, selectedModel, progress) { success ->
+                        if (success) {
+                            prefs.edit { 
+                                putString(KEY_GEMINI_API_KEY, key)
+                                putString(KEY_GEMINI_MODEL, selectedModel)
+                            }
+                            _generativeModel = null // Reset to apply changes
+                            dialog.dismiss()
+                            onSuccess()
+                        }
+                    }
+                } else {
+                    Toast.makeText(this, R.string.no_api_key_error, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun testApiKey(key: String, modelName: String, progress: View, onResult: (Boolean) -> Unit) {
+        progress.isVisible = true
+        val testModel = GenerativeModel(modelName = modelName, apiKey = key)
+        
+        lifecycleScope.launch {
+            try {
+                // simple test prompt
+                testModel.generateContent("hi")
+                progress.isVisible = false
+                Toast.makeText(this@BrowserActivity, getString(R.string.saved), Toast.LENGTH_SHORT).show()
+                onResult(true)
+            } catch (e: Exception) {
+                progress.isVisible = false
+                Log.e("GooneeAI", "API Key Test Failed", e)
+                val errorMsg = if (e.message?.contains("API_KEY_INVALID") == true) "API Key ไม่ถูกต้อง" else "Error: ${e.message}"
+                Toast.makeText(this@BrowserActivity, errorMsg, Toast.LENGTH_LONG).show()
+                onResult(false)
+            }
+        }
+    }
+
     private fun showAiGeneratorDialog() {
         val scroll = ScrollView(this)
         val mainLayout = LinearLayout(this).apply {
@@ -327,24 +595,22 @@ class BrowserActivity : AppCompatActivity() {
             setPadding(50, 30, 50, 30)
         }
         
-        // Title & Subtitle
         val titleText = TextView(this).apply {
-            text = "🛠️ AI Tool Builder"
+            text = getString(R.string.ai_tool_builder)
             textSize = 20f
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 10)
         }
         val subtitleText = TextView(this).apply {
-            text = "Choose a preset or type your idea\nเลือกจากตัวอย่าง หรือพิมพ์ไอเดียของคุณ"
+            text = getString(R.string.ai_tool_builder_subtitle)
             textSize = 14f
             setPadding(0, 0, 0, 20)
         }
         mainLayout.addView(titleText)
         mainLayout.addView(subtitleText)
         
-        // Preset Buttons Grid (2 columns)
         val presetsLabel = TextView(this).apply {
-            text = "📋 Quick Presets / เลือกจากตัวอย่าง"
+            text = getString(R.string.or_choose_preset)
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 10, 0, 10)
@@ -357,23 +623,17 @@ class BrowserActivity : AppCompatActivity() {
         
         var dialogRef: AlertDialog? = null
         
-        // Create rows of 2 buttons each
         for (i in aiPresets.indices step 2) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { 
-                    bottomMargin = 10 
-                }
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 10 }
             }
             
-            // First button
             val btn1 = Button(this).apply {
-                text = "${aiPresets[i].icon} ${aiPresets[i].name}"
+                text = getString(R.string.preset_format, aiPresets[i].icon, aiPresets[i].name)
                 textSize = 12f
                 isAllCaps = false
-                layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { 
-                    marginEnd = 5 
-                }
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = 5 }
                 setOnClickListener {
                     dialogRef?.dismiss()
                     generateAiScript(aiPresets[i].prompt)
@@ -381,15 +641,12 @@ class BrowserActivity : AppCompatActivity() {
             }
             row.addView(btn1)
             
-            // Second button (if exists)
             if (i + 1 < aiPresets.size) {
                 val btn2 = Button(this).apply {
-                    text = "${aiPresets[i + 1].icon} ${aiPresets[i + 1].name}"
+                    text = getString(R.string.preset_format, aiPresets[i+1].icon, aiPresets[i+1].name)
                     textSize = 12f
                     isAllCaps = false
-                    layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { 
-                        marginStart = 5 
-                    }
+                    layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = 5 }
                     setOnClickListener {
                         dialogRef?.dismiss()
                         generateAiScript(aiPresets[i + 1].prompt)
@@ -397,24 +654,18 @@ class BrowserActivity : AppCompatActivity() {
                 }
                 row.addView(btn2)
             }
-            
             gridLayout.addView(row)
         }
         mainLayout.addView(gridLayout)
         
-        // Divider
         val divider = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(-1, 2).apply {
-                topMargin = 20
-                bottomMargin = 20
-            }
+            layoutParams = LinearLayout.LayoutParams(-1, 2).apply { topMargin = 20; bottomMargin = 20 }
             setBackgroundColor(Color.LTGRAY)
         }
         mainLayout.addView(divider)
         
-        // Free-form input section
         val customLabel = TextView(this).apply {
-            text = "✍️ Or type your idea / หรือพิมพ์ไอเดีย"
+            text = getString(R.string.try_speaking)
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 10)
@@ -431,19 +682,17 @@ class BrowserActivity : AppCompatActivity() {
         mainLayout.addView(inputEdit)
         
         val generateBtn = Button(this).apply {
-            text = "✨ Generate / เจนสคริปต์"
+            text = getString(R.string.generate)
             textSize = 14f
             isAllCaps = false
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
-                topMargin = 15
-            }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = 15 }
             setOnClickListener {
                 val idea = inputEdit.text.toString()
                 if (idea.isNotEmpty()) {
                     dialogRef?.dismiss()
                     generateAiScript(idea)
                 } else {
-                    Toast.makeText(this@BrowserActivity, "Please enter your idea / กรุณาใส่ไอเดีย", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@BrowserActivity, R.string.try_speaking, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -453,21 +702,21 @@ class BrowserActivity : AppCompatActivity() {
         
         dialogRef = AlertDialog.Builder(this)
             .setView(scroll)
-            .setNegativeButton("Close / ปิด", null)
+            .setNegativeButton(R.string.cancel, null)
             .create()
         dialogRef.show()
     }
 
     private fun generateAiScript(idea: String) {
-        val apiKey = prefs.getString(KEY_GEMINI_API_KEY, "")
-        if (apiKey.isNullOrEmpty()) {
-            Toast.makeText(this, "Please set Gemini API Key in Settings / กรุณาตั้งค่า API Key ในการตั้งค่า", Toast.LENGTH_LONG).show()
-            showApiKeySetupDialog()
+        val model = getGenerativeModel()
+        if (model == null) {
+            Toast.makeText(this, R.string.no_api_key_error, Toast.LENGTH_LONG).show()
+            showApiKeySetupDialog { generateAiScript(idea) }
             return
         }
 
         val loadingDialog = AlertDialog.Builder(this)
-            .setMessage("เฮีย AI กำลังคิดโค้ดให้คุณ... รอแป๊บนะจ๊ะ")
+            .setMessage(R.string.ai_generating)
             .setCancelable(false)
             .show()
 
@@ -481,30 +730,51 @@ class BrowserActivity : AppCompatActivity() {
                     2. "script": The JavaScript code (IIFE format) that performs the action.
                     3. "explanation": A brief explanation in Thai of how the code works.
                     
-                    Constraint: If the user asks for 'Devtool' or 'Eruda', provide a script that fetches Eruda from CDN and initializes it.
-                    Only return the JSON.
+                    Only return valid JSON. No markdown formatting.
                 """.trimIndent()
 
-                val response = getGenerativeModel().generateContent(prompt)
-                val jsonText = response.text?.replace("```json", "")?.replace("```", "")?.trim() ?: ""
-                
+                val response = model.generateContent(prompt)
+                var rawText = response.text ?: ""
+
+                // --- Robust JSON extraction: find first '{' and matching '}' ---
+                var jsonText = rawText
+                val firstOpen = rawText.indexOf('{')
+                if (firstOpen >= 0) {
+                    var depth = 0
+                    var endIndex = -1
+                    for (i in firstOpen until rawText.length) {
+                        when (rawText[i]) {
+                            '{' -> depth++
+                            '}' -> {
+                                depth--
+                                if (depth == 0) { endIndex = i; break }
+                            }
+                        }
+                    }
+                    if (endIndex >= 0) {
+                        jsonText = rawText.substring(firstOpen, endIndex + 1)
+                    }
+                }
+
                 loadingDialog.dismiss()
-                
+
                 try {
                     val json = JSONObject(jsonText)
                     showAiResultDialog(
-                        json.getString("name"),
-                        json.getString("script"),
-                        json.getString("explanation")
+                        json.optString("name", "AI Tool"),
+                        json.optString("script", "alert('No script generated')"),
+                        json.optString("explanation", "ไม่มีคำอธิบาย")
                     )
                 } catch (e: Exception) {
-                    // Fallback if AI doesn't return valid JSON
-                    showAiResultDialog("AI Tool", "alert('AI generated script error')", "ขอโทษทีครับ เฮียเอ๋อไปนิด ลองสั่งใหม่นะ")
+                    Log.e("GooneeAI", "JSON Parse Error: $rawText", e)
+                    showAiResultDialog("AI Tool", "alert('AI generated script error')", "ขอโทษทีครับ เฮียเอ๋อไปนิด ลองสั่งใหม่นะ (JSON Error)")
                 }
 
             } catch (e: Exception) {
                 loadingDialog.dismiss()
-                Toast.makeText(this@BrowserActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                Log.e("GooneeAI", "AI Error", e)
+                val errorMsg = if (e.message?.contains("SAFETY") == true) "เนื้อหานี้ถูกบล็อกโดยระบบความปลอดภัย" else "Error: ${e.message}"
+                Toast.makeText(this@BrowserActivity, errorMsg, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -517,7 +787,7 @@ class BrowserActivity : AppCompatActivity() {
         }
 
         val expText = TextView(this).apply {
-            text = "💡 คำอธิบาย:\n$explanation"
+            text = getString(R.string.explanation_format, explanation)
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 20)
         }
@@ -535,18 +805,21 @@ class BrowserActivity : AppCompatActivity() {
         scroll.addView(layout)
 
         AlertDialog.Builder(this)
-            .setTitle("AI เขียนเสร็จแล้ว! ($name)")
+            .setTitle(getString(R.string.ai_done_format, name))
             .setView(scroll)
-            .setPositiveButton("เพิ่มลง Shortcut") { _, _ ->
-                shortcuts.add(Shortcut(name, script, isAutoRun = false, isVisibleOnMain = true))
+            .setPositiveButton(R.string.save_to_tools) { _, _ ->
+                shortcuts.add(Shortcut(name, script, isAutoRun = false, isVisibleOnMain = true, description = explanation))
                 saveShortcuts()
                 notifyShortcutChanged()
-                Toast.makeText(this, "เพิ่มเครื่องมือ $name เรียบร้อย!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.saved), Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("คัดลอกโค้ด") { _, _ ->
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            .setNeutralButton(R.string.try_first) { _, _ ->
+                actuallyExecuteShortcut(Shortcut(name, script))
+            }
+            .setNegativeButton(R.string.copy_code) { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("AI Script", script))
-                Toast.makeText(this, "คัดลอกลงคลิปบอร์ดแล้ว", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
             }
             .show()
     }
@@ -577,7 +850,7 @@ class BrowserActivity : AppCompatActivity() {
     private fun saveHistory() {
         val array = JSONArray()
         historyList.forEach { array.put(it) }
-        prefs.edit().putString(KEY_HISTORY, array.toString()).apply()
+        prefs.edit { putString(KEY_HISTORY, array.toString()) }
     }
 
     private fun loadHistory() {
@@ -598,8 +871,10 @@ class BrowserActivity : AppCompatActivity() {
             obj.put("title", it.title)
             array.put(obj)
         }
-        prefs.edit().putString(KEY_SAVED_TABS, array.toString()).apply()
-        prefs.edit().putLong(KEY_CURRENT_TAB_ID, currentTabId).apply()
+        prefs.edit { 
+            putString(KEY_SAVED_TABS, array.toString())
+            putLong(KEY_CURRENT_TAB_ID, currentTabId)
+        }
     }
 
     private fun loadTabs() {
@@ -613,6 +888,10 @@ class BrowserActivity : AppCompatActivity() {
                     tabsList.add(TabItem(obj.getLong("id"), obj.getString("url"), obj.getString("title")))
                 }
                 currentTabId = prefs.getLong(KEY_CURRENT_TAB_ID, -1)
+                // If prefs didn't store a valid current tab id, default to first tab (if exists)
+                if (currentTabId == -1L && tabsList.isNotEmpty()) {
+                    currentTabId = tabsList.first().id
+                }
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
@@ -628,7 +907,7 @@ class BrowserActivity : AppCompatActivity() {
                 if (tabsList.size > 1) {
                     showCloseTabDialog(tab, position)
                 } else {
-                    Toast.makeText(this, "ต้องมีอย่างน้อย 1 แท็บ", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, R.string.min_one_tab, Toast.LENGTH_SHORT).show()
                 }
             }
         )
@@ -641,9 +920,9 @@ class BrowserActivity : AppCompatActivity() {
 
     private fun showCloseTabDialog(tab: TabItem, position: Int) {
         AlertDialog.Builder(this)
-            .setTitle("ปิดแท็บ")
-            .setMessage("คุณต้องการปิดแท็บ '${tab.title}' ใช่หรือไม่?")
-            .setPositiveButton("ปิด") { _, _ ->
+            .setTitle(R.string.close_tab)
+            .setMessage(getString(R.string.close_tab_confirm, tab.title, "Goonee"))
+            .setPositiveButton(R.string.close) { _, _ ->
                 tabsList.removeAt(position)
                 tabsAdapter.notifyItemRemoved(position)
                 if (currentTabId == tab.id) {
@@ -657,14 +936,14 @@ class BrowserActivity : AppCompatActivity() {
                 }
                 saveTabs()
             }
-            .setNegativeButton("ยกเลิก", null)
+            .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
     private fun togglePanel(show: Boolean) {
         isPanelVisible = show
-        binding.floatingMenuPanel.visibility = if (show) View.VISIBLE else View.GONE
-        binding.fabMainToggle.visibility = if (show) View.GONE else View.VISIBLE
+        binding.floatingMenuPanel.isVisible = show
+        binding.fabMainToggle.isVisible = !show
     }
 
     private fun setupShortcutSystem() {
@@ -684,36 +963,71 @@ class BrowserActivity : AppCompatActivity() {
     }
 
     private fun executeShortcut(shortcut: Shortcut) {
+        if (isSandboxMode && !shortcut.isTrusted) {
+            showSandboxConfirmDialog(shortcut)
+        } else {
+            actuallyExecuteShortcut(shortcut)
+        }
+    }
+
+    private fun showSandboxConfirmDialog(shortcut: Shortcut) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 20, 50, 20)
+        }
+        
+        if (shortcut.description.isNotEmpty()) {
+            layout.addView(TextView(this).apply {
+                text = getString(R.string.explanation_format, shortcut.description)
+                setPadding(0, 0, 0, 20)
+            })
+        }
+        
+        val codeView = TextView(this).apply {
+            text = shortcut.script
+            textSize = 10f
+            setBackgroundColor(Color.LTGRAY)
+            isVisible = false
+        }
+        
+        layout.addView(Button(this).apply {
+            text = getString(R.string.what_does_this_do)
+            setOnClickListener { codeView.isVisible = !codeView.isVisible }
+        })
+        layout.addView(codeView)
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.confirm_run)
+            .setView(layout)
+            .setPositiveButton(R.string.confirm_run) { _, _ -> actuallyExecuteShortcut(shortcut) }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun actuallyExecuteShortcut(shortcut: Shortcut) {
         val webView = getWebViewForTab(activeTab)
         val wrappedScript = "(function() { try { ${shortcut.script}; return 'SUCCESS'; } catch(e) { return 'ERROR:' + e.stack; } })()"
         
         webView.evaluateJavascript(wrappedScript) { result ->
             val cleanResult = result?.removeSurrounding("\"") ?: ""
             if (cleanResult.startsWith("ERROR:")) {
-                val errorLog = cleanResult.removePrefix("ERROR:")
-                val snackbar = Snackbar.make(binding.root, "Script Error!", 2000)
-                snackbar.setAction("Copy Log") {
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("JS Error", errorLog))
-                    Toast.makeText(this, "Log copied", Toast.LENGTH_SHORT).show()
-                }
-                snackbar.show()
+                Toast.makeText(this, R.string.script_error, Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "Script: ${shortcut.name} run success", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.run_success, Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun showAddEditShortcutDialog(shortcut: Shortcut?, position: Int = -1) {
-        val nameInput = EditText(this).apply { hint = "ชื่อสคริปต์"; shortcut?.let { setText(it.name) } }
-        val scriptInput = EditText(this).apply { hint = "JavaScript Code"; shortcut?.let { setText(it.script) } }
-        val autoRunCheck = CheckBox(this).apply { text = "รันอัตโนมัติ (Background)"; isChecked = shortcut?.isAutoRun ?: false }
+    private fun showAddEditShortcutDialog(shortcut: Shortcut?) {
+        val nameInput = EditText(this).apply { hint = getString(R.string.tool_name); shortcut?.let { setText(it.name) } }
+        val scriptInput = EditText(this).apply { hint = getString(R.string.tool_script); shortcut?.let { setText(it.script) } }
+        val autoRunCheck = CheckBox(this).apply { text = getString(R.string.auto_run); isChecked = shortcut?.isAutoRun ?: false }
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(50, 20, 50, 20)
             addView(nameInput); addView(scriptInput); addView(autoRunCheck)
         }
-        AlertDialog.Builder(this).setTitle(if (shortcut == null) "เพิ่มสคริปต์" else "แก้ไขสคริปต์").setView(layout)
-            .setPositiveButton("บันทึก") { _, _ ->
+        AlertDialog.Builder(this).setTitle(if (shortcut == null) R.string.add_tool else R.string.edit_tool).setView(layout)
+            .setPositiveButton(R.string.saved) { _, _ ->
                 val name = nameInput.text.toString()
                 val script = scriptInput.text.toString()
                 if (name.isNotEmpty() && script.isNotEmpty()) {
@@ -721,12 +1035,12 @@ class BrowserActivity : AppCompatActivity() {
                     else { shortcut.name = name; shortcut.script = script; shortcut.isAutoRun = autoRunCheck.isChecked }
                     saveShortcuts(); notifyShortcutChanged()
                 }
-            }.setNegativeButton("ยกเลิก", null).show()
+            }.setNegativeButton(R.string.cancel, null).show()
     }
 
     private fun showEditDeleteDialog(shortcut: Shortcut, position: Int) {
-        AlertDialog.Builder(this).setTitle(shortcut.name).setItems(arrayOf("แก้ไข", "ลบ")) { _, which ->
-            if (which == 0) showAddEditShortcutDialog(shortcut, position)
+        AlertDialog.Builder(this).setTitle(shortcut.name).setItems(arrayOf(getString(R.string.edit_tool), getString(R.string.delete_tool))) { _, which ->
+            if (which == 0) showAddEditShortcutDialog(shortcut)
             else { shortcuts.removeAt(position); saveShortcuts(); notifyShortcutChanged() }
         }.show()
     }
@@ -736,9 +1050,11 @@ class BrowserActivity : AppCompatActivity() {
         shortcuts.forEach {
             val obj = JSONObject(); obj.put("name", it.name); obj.put("script", it.script)
             obj.put("isAutoRun", it.isAutoRun); obj.put("isVisibleOnMain", it.isVisibleOnMain)
+            obj.put("icon", it.icon); obj.put("description", it.description)
+            obj.put("isTrusted", it.isTrusted)
             array.put(obj)
         }
-        prefs.edit().putString(KEY_SHORTCUTS, array.toString()).apply()
+        prefs.edit { putString(KEY_SHORTCUTS, array.toString()) }
     }
 
     private fun loadShortcuts() {
@@ -747,10 +1063,18 @@ class BrowserActivity : AppCompatActivity() {
             val array = JSONArray(saved); shortcuts.clear()
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
-                shortcuts.add(Shortcut(obj.getString("name"), obj.getString("script"), obj.getBoolean("isAutoRun"), obj.getBoolean("isVisibleOnMain")))
+                shortcuts.add(Shortcut(
+                    obj.getString("name"), 
+                    obj.getString("script"), 
+                    obj.optBoolean("isAutoRun", false), 
+                    obj.optBoolean("isVisibleOnMain", false),
+                    obj.optString("icon", "🔧"),
+                    obj.optString("description", ""),
+                    obj.optBoolean("isTrusted", false)
+                ))
             }
         } else {
-            shortcuts.add(Shortcut("Dark Mode", "document.body.style.backgroundColor='#222';document.body.style.color='#fff';", false, true))
+            shortcuts.add(Shortcut("Dark Mode", "document.body.style.backgroundColor='#222';document.body.style.color='#fff';", false, true, "🌙", "โหมดมืด", true))
         }
     }
 
@@ -758,38 +1082,60 @@ class BrowserActivity : AppCompatActivity() {
         getWebViewForTab(activeTab).loadUrl(url); binding.edtUrl.setText(url)
         tabsList.find { it.id == currentTabId }?.url = url
         saveTabs()
+        trackVisit(url)
+    }
+
+    private fun trackVisit(url: String) {
+        val domain = Uri.parse(url).host ?: return
+        if (domain.isEmpty() || domain == "google.com") return
+        
+        val count = visitCounts.getOrDefault(domain, 0) + 1
+        visitCounts[domain] = count
+        saveVisitCounts()
+        
+        val currentHome = prefs.getString(KEY_HOME_URL, DEFAULT_HOME) ?: DEFAULT_HOME
+        if (count >= 5 && !currentHome.contains(domain)) {
+            suggestSetAsHome(domain)
+        }
+    }
+
+    private fun suggestSetAsHome(domain: String) {
+        Snackbar.make(binding.root, getString(R.string.suggest_set_home, domain, "Goonee"), Snackbar.LENGTH_LONG)
+            .setAction(R.string.set_now) {
+                prefs.edit { putString(KEY_HOME_URL, "https://$domain") }
+                Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
+            }.show()
+    }
+
+    private fun saveVisitCounts() {
+        val obj = JSONObject()
+        visitCounts.forEach { (k, v) -> obj.put(k, v) }
+        prefs.edit { putString(KEY_VISIT_COUNTS, obj.toString()) }
+    }
+
+    private fun loadVisitCounts() {
+        val saved = prefs.getString(KEY_VISIT_COUNTS, null)
+        if (saved != null) {
+            val obj = JSONObject(saved)
+            obj.keys().forEach { visitCounts[it] = obj.getInt(it) }
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView(w: WebView) {
         w.settings.apply {
-            javaScriptEnabled = true; domStorageEnabled = true; databaseEnabled = true
+            javaScriptEnabled = true; domStorageEnabled = true
             allowFileAccess = true; allowContentAccess = true; loadWithOverviewMode = true
             useWideViewPort = true; mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             setSupportZoom(true); builtInZoomControls = true; displayZoomControls = false
         }
-        w.addJavascriptInterface(AndroidBridge(this), "AndroidBridge")
+        w.addJavascriptInterface(AndroidBridge(this), "Android")
         w.setDownloadListener { url, _, _, _, _ ->
             try {
                 val intent = Intent(Intent.ACTION_VIEW)
-                intent.data = Uri.parse(url)
+                intent.data = url.toUri()
                 startActivity(intent)
-                Toast.makeText(this, "Opening download link...", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "No app to handle download", Toast.LENGTH_SHORT).show()
-            }
-        }
-        w.setOnLongClickListener {
-            val result = w.hitTestResult
-            if (result.type == WebView.HitTestResult.SRC_ANCHOR_TYPE || result.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
-                val url = result.extra
-                if (url != null) {
-                    val data = ClipData.newPlainText("url", url)
-                    val shadow = View.DragShadowBuilder(w)
-                    w.startDragAndDrop(data, shadow, null, 0)
-                    true
-                } else false
-            } else false
+            } catch (e: Exception) {}
         }
         w.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
@@ -797,7 +1143,7 @@ class BrowserActivity : AppCompatActivity() {
                 if (view == getWebViewForTab(activeTab)) {
                     tabsList.find { it.id == currentTabId }?.let { 
                         it.title = title ?: "New Tab"
-                        tabsAdapter.notifyDataSetChanged()
+                        tabsAdapter.notifyItemChanged(tabsList.indexOf(it))
                         saveTabs()
                     }
                 }
@@ -817,16 +1163,9 @@ class BrowserActivity : AppCompatActivity() {
         }
         w.setOnTouchListener { v, _ ->
             activeTab = if (v.id == R.id.webviewA) 1 else 2
-            v.requestFocus(); binding.edtUrl.setText(w.url); false
-        }
-    }
-
-    override fun onBackPressed() {
-        val currentWebView = getWebViewForTab(activeTab)
-        if (currentWebView.canGoBack()) {
-            currentWebView.goBack()
-        } else {
-            super.onBackPressed()
+            v.requestFocus(); binding.edtUrl.setText(w.url)
+            v.performClick()
+            false
         }
     }
 
@@ -862,10 +1201,10 @@ class BrowserActivity : AppCompatActivity() {
         binding.webContainerA.layoutParams = lpA; binding.webContainerB.layoutParams = lpB
     }
 
-    fun toggleSplit(p: String = "") {
+    fun toggleSplit() {
         isSplit = !isSplit
-        binding.webContainerB.visibility = if (isSplit) View.VISIBLE else View.GONE
-        binding.splitHandle.visibility = if (isSplit) View.VISIBLE else View.GONE
+        binding.webContainerB.isVisible = isSplit
+        binding.splitHandle.isVisible = isSplit
         
         if (isSplit) {
             val home = prefs.getString(KEY_HOME_URL, DEFAULT_HOME) ?: DEFAULT_HOME
@@ -890,37 +1229,52 @@ class BrowserActivity : AppCompatActivity() {
             setPadding(60, 40, 60, 40)
         }
 
-        val cbDesktop = CheckBox(this).apply {
-            text = "โหมดเดสท็อป (Desktop Mode)"
+        layout.addView(CheckBox(this).apply {
+            text = getString(R.string.desktop_mode)
             isChecked = isDesktopMode
-            textSize = 16f
             setOnCheckedChangeListener { _, isChecked ->
                 isDesktopMode = isChecked
                 applyDesktopMode(webViewA, isChecked)
                 applyDesktopMode(webViewB, isChecked)
             }
-        }
-        layout.addView(cbDesktop)
+        })
+
+        layout.addView(CheckBox(this).apply {
+            text = getString(R.string.sandbox_mode)
+            isChecked = isSandboxMode
+            setOnCheckedChangeListener { _, isChecked ->
+                isSandboxMode = isChecked
+                prefs.edit { putBoolean(KEY_SANDBOX_MODE, isChecked) }
+            }
+        })
+
+        layout.addView(CheckBox(this).apply {
+            text = getString(R.string.simple_mode)
+            isChecked = isSimpleMode
+            setOnCheckedChangeListener { _, isChecked ->
+                applySimpleMode(isChecked)
+            }
+        })
 
         val zoomLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 30, 0, 30)
         }
-        val tvZoom = TextView(this).apply { text = "ขนาดตัวอักษร: $textZoom%"; textSize = 16f; layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
+        val tvZoom = TextView(this).apply { text = getString(R.string.text_zoom_format, textZoom); textSize = 16f; layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
         val btnZoomOut = Button(this, null, android.R.attr.buttonStyleSmall).apply { text = "-" }
         val btnZoomIn = Button(this, null, android.R.attr.buttonStyleSmall).apply { text = "+" }
         
         btnZoomIn.setOnClickListener {
             textZoom += 10
-            tvZoom.text = "ขนาดตัวอักษร: $textZoom%"
+            tvZoom.text = getString(R.string.text_zoom_format, textZoom)
             webViewA.settings.textZoom = textZoom
             webViewB.settings.textZoom = textZoom
         }
         btnZoomOut.setOnClickListener {
             if (textZoom > 50) {
                 textZoom -= 10
-                tvZoom.text = "ขนาดตัวอักษร: $textZoom%"
+                tvZoom.text = getString(R.string.text_zoom_format, textZoom)
                 webViewA.settings.textZoom = textZoom
                 webViewB.settings.textZoom = textZoom
             }
@@ -928,9 +1282,9 @@ class BrowserActivity : AppCompatActivity() {
         zoomLayout.addView(tvZoom); zoomLayout.addView(btnZoomOut); zoomLayout.addView(btnZoomIn)
         layout.addView(zoomLayout)
 
-        val buttons = mutableListOf(
-            "เปิด/ปิด 2 หน้าจอ" to { toggleSplit() },
-            "สลับแนวตั้ง/แนวนอน" to { 
+        val buttons = arrayOf(
+            getString(R.string.split_mode) to { toggleSplit() },
+            getString(R.string.toggle_orientation) to { 
                 verticalSplit = !verticalSplit
                 binding.webContainers.orientation = if (verticalSplit) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
                 adjustWeightsByVal(if (isSplit) 0.5f else 1.0f)
@@ -942,178 +1296,33 @@ class BrowserActivity : AppCompatActivity() {
                 }
                 binding.splitHandle.layoutParams = lpHandle
             },
-            "ตั้งค่า Gemini AI" to { showApiKeySetupDialog() },
-            "ตั้งค่าหน้าแรก (Home URL)" to { showSetHomeUrlDialog() },
-            "วิธีใช้งาน (Guide)" to { showGuideDialog() }
+            getString(R.string.set_home) to { showSetHomeUrlDialog() },
+            getString(R.string.guide) to { showGuideDialog() },
+            getString(R.string.api_key_setting) to { showApiKeySetupDialog {} }
         )
 
         buttons.forEach { (label, action) ->
             layout.addView(Button(this).apply {
                 text = label
-                setOnClickListener { action(); if (label != "ตั้งค่าหน้าแรก (Home URL)" && label != "วิธีใช้งาน (Guide)" && label != "ตั้งค่า Gemini AI") (parent.parent.parent as? AlertDialog)?.dismiss() }
+                setOnClickListener { action(); if (label != getString(R.string.set_home) && label != getString(R.string.guide) && label != getString(R.string.api_key_setting)) (parent.parent.parent as? AlertDialog)?.dismiss() }
             })
         }
 
-        AlertDialog.Builder(this).setTitle("ตั้งค่า Gooser").setView(layout).setPositiveButton("ปิด", null).show()
-    }
-
-    private fun showApiKeySetupDialog() {
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(60, 40, 60, 40)
-        }
-
-        val apiKeyInput = EditText(this).apply {
-            hint = "ป้อน Gemini API Key"
-            setText(prefs.getString(KEY_GEMINI_API_KEY, ""))
-            setPadding(30, 30, 30, 30)
-            textSize = 14f
-        }
-        layout.addView(apiKeyInput)
-
-        val modelLabel = TextView(this).apply {
-            text = "เลือกโมเดล (Select Model):"
-            textSize = 14f
-            setPadding(0, 20, 0, 10)
-        }
-        layout.addView(modelLabel)
-
-        val modelSpinner = Spinner(this)
-        val initialModels = listOf(prefs.getString(KEY_GEMINI_MODEL, "gemini-1.5-flash") ?: "gemini-1.5-flash")
-        modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, initialModels)
-        layout.addView(modelSpinner)
-
-        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleSmall).apply {
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL; topMargin = 20 }
-        }
-        layout.addView(progressBar)
-
-        val fetchButton = Button(this).apply {
-            text = "Fetch Available Models"
-            isAllCaps = false
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 }
-        }
-        layout.addView(fetchButton)
-
-        val saveButton = Button(this).apply {
-            text = "Save and Test Selected Model"
-            isAllCaps = false
-            isEnabled = prefs.getString(KEY_GEMINI_API_KEY, "")?.isNotEmpty() == true
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = 10 }
-        }
-        layout.addView(saveButton)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Gemini AI Settings")
-            .setView(layout)
-            .setNegativeButton("ยกเลิก", null)
-            .create()
-
-        fetchButton.setOnClickListener {
-            val key = apiKeyInput.text.toString().trim()
-            if (key.isEmpty()) {
-                Toast.makeText(this, "กรุณาใส่ API Key ก่อน", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            progressBar.visibility = View.VISIBLE
-            fetchButton.isEnabled = false
-
-            lifecycleScope.launch {
-                try {
-                    // GenerativeModel does not have listModels() directly in some versions of the SDK.
-                    // However, we can try to use the model with a simple prompt to verify.
-                    // For dynamic model listing, usually you'd need a different service, 
-                    // but we can provide a verified list or try to fetch if the SDK supports it.
-                    // Since I cannot verify the exact SDK version's listModels signature without more context,
-                    // I will implement a robust verification.
-                    
-                    val testModel = GenerativeModel(modelName = "gemini-1.5-flash", apiKey = key)
-                    testModel.generateContent("test") // Just to check if key is valid
-                    
-                    val availableModels = listOf("gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-2.0-flash-exp")
-                    modelSpinner.adapter = ArrayAdapter(this@BrowserActivity, android.R.layout.simple_spinner_dropdown_item, availableModels)
-                    
-                    saveButton.isEnabled = true
-                    Toast.makeText(this@BrowserActivity, "API Key Valid. Models loaded.", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) {
-                    Toast.makeText(this@BrowserActivity, "Invalid API Key: ${e.message}", Toast.LENGTH_LONG).show()
-                } finally {
-                    progressBar.visibility = View.GONE
-                    fetchButton.isEnabled = true
-                }
-            }
-        }
-
-        saveButton.setOnClickListener {
-            val key = apiKeyInput.text.toString().trim()
-            val model = modelSpinner.selectedItem?.toString() ?: "gemini-1.5-flash"
-
-            progressBar.visibility = View.VISIBLE
-            saveButton.isEnabled = false
-
-            lifecycleScope.launch {
-                try {
-                    val testModel = GenerativeModel(modelName = model, apiKey = key)
-                    val response = testModel.generateContent("Say 'Verified'")
-                    
-                    if (response.text?.contains("Verified", ignoreCase = true) == true) {
-                        prefs.edit().apply {
-                            putString(KEY_GEMINI_API_KEY, key)
-                            putString(KEY_GEMINI_MODEL, model)
-                        }.apply()
-                        Toast.makeText(this@BrowserActivity, "บันทึกเรียบร้อย! โมเดล $model พร้อมใช้งาน", Toast.LENGTH_SHORT).show()
-                        dialog.dismiss()
-                    } else {
-                        Toast.makeText(this@BrowserActivity, "โมเดลไม่ตอบสนองตามที่คาดไว้", Toast.LENGTH_LONG).show()
-                    }
-                } catch (e: Exception) {
-                    Toast.makeText(this@BrowserActivity, "Error during verification: ${e.message}", Toast.LENGTH_LONG).show()
-                } finally {
-                    progressBar.visibility = View.GONE
-                    saveButton.isEnabled = true
-                }
-            }
-        }
-
-        dialog.show()
+        AlertDialog.Builder(this).setTitle(R.string.settings).setView(layout).setPositiveButton(R.string.close, null).show()
     }
 
     private fun showGuideDialog() {
-        val guideText = """
-            💬 [ตัวอย่างการสั่ง AI เพื่อเขียนสคริปต์]
-            
-            ตัวอย่างที่ 1: "ช่วยเขียน javascript สำหรับใช้ในแอพ GooneeBrowser ที่กดรันแล้วจะแสดงทุกปุ่มทุกฟังชั่นที่ถูกซ่อนในหน้าเว็บทั้งหมด"
-            💡 AI: (function(){ document.querySelectorAll('*').forEach(el => { if(getComputedStyle(el).display === 'none') el.style.display = 'block'; if(getComputedStyle(el).visibility === 'hidden') el.style.visibility = 'visible'; }); })();
-            
-            ตัวอย่างที่ 2: "ขอสคริปต์ดึงลิ้งค์วิดีโอหรือปุ่มดาวน์โหลดที่ถูกล็อคไว้ให้แสดงออกมาหน่อย"
-            💡 AI: (function(){ document.querySelectorAll('video, a[href*="download"]').forEach(el => { el.style.border = '3px solid lime'; el.style.display = 'block !important'; }); })();
-            
-            ตัวอย่างที่ 3: "ลบพวกหน้าต่าง Pop-up หรือ Overlay ที่บังหน้าจอออกให้หมดเพื่อกดปุ่มข้างหลังได้"
-            💡 AI: (function(){ document.querySelectorAll('div[class*="popup"], div[class*="modal"], div[class*="overlay"]').forEach(el => el.remove()); })();
-            
-            -------------------------------------------
-            📌 [คำอธิบายฟังก์ชันต่างๆ ของ Gooser]
-            
-            1. โหมด 2 หน้าจอ (Split Mode): กดเพื่อแบ่งหน้าจอเปิด 2 เว็บพร้อมกัน เหมาะสำหรับดูวิดีโอไปพร้อมกับอ่านแชทหรือหาข้อมูล
-            2. ระบบสคริปต์ (Shortcuts): คุณสามารถนำโค้ด JavaScript มาบันทึกไว้เพื่อสั่งงานเว็บอัตโนมัติ เช่น การกดปุ่มซ้ำๆ หรือการเปลี่ยนสีหน้าเว็บ
-            3. โหมดเดสท็อป (Desktop Mode): หลอกหน้าเว็บว่าเราใช้งานจากคอมพิวเตอร์ เพื่อให้เห็นหน้าตาเว็บแบบเต็ม ไม่ใช่เวอร์ชันมือถือ
-            4. การลากและวาง (Drag & Drop): คุณสามารถลากลิ้งค์หรือรูปภาพจากหน้าเว็บไปวางที่ "แถบแท็บ" หรือ "ช่อง URL" เพื่อเปิดหน้านั้นได้ทันที
-            5. การจดจำสถานะ: แอพจะจำแท็บทั้งหมดที่คุณเปิดค้างไว้ แม้ปิดเครื่องแล้วเปิดใหม่ แท็บเดิมก็จะยังอยู่ครบถ้วน
-        """.trimIndent()
-
         val textView = TextView(this).apply {
-            text = guideText
+            text = getString(R.string.guide)
             setPadding(50, 40, 50, 40)
             textSize = 14f
             movementMethod = android.text.method.ScrollingMovementMethod()
         }
 
         AlertDialog.Builder(this)
-            .setTitle("คู่มือการใช้งาน Gooser")
+            .setTitle(R.string.guide)
             .setView(textView)
-            .setPositiveButton("เข้าใจแล้ว", null)
+            .setPositiveButton(R.string.close, null)
             .show()
     }
 
@@ -1122,12 +1331,14 @@ class BrowserActivity : AppCompatActivity() {
         if (enabled) {
             val desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             settings.userAgentString = desktopUA
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
         } else {
-            settings.userAgentString = null
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
+            // Restore a reliable default user agent instead of setting null
+            try {
+                settings.userAgentString = WebSettings.getDefaultUserAgent(this)
+            } catch (e: Exception) {
+                // fallback: clear custom UA if default retrieval fails
+                settings.userAgentString = null
+            }
         }
         webView.reload()
     }
@@ -1135,14 +1346,14 @@ class BrowserActivity : AppCompatActivity() {
     private fun showSetHomeUrlDialog() {
         val currentHome = prefs.getString(KEY_HOME_URL, DEFAULT_HOME)
         val input = EditText(this).apply { setText(currentHome) }
-        AlertDialog.Builder(this).setTitle("ตั้งค่าหน้าแรก").setView(input)
-            .setPositiveButton("บันทึก") { _, _ ->
+        AlertDialog.Builder(this).setTitle(R.string.set_home).setView(input)
+            .setPositiveButton(R.string.saved) { _, _ ->
                 val newUrl = input.text.toString()
                 if (newUrl.isNotEmpty()) {
-                    prefs.edit().putString(KEY_HOME_URL, newUrl).apply()
-                    Toast.makeText(this, "บันทึกเรียบร้อย", Toast.LENGTH_SHORT).show()
+                    prefs.edit { putString(KEY_HOME_URL, newUrl) }
+                    Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
                 }
-            }.setNegativeButton("ยกเลิก", null).show()
+            }.setNegativeButton(R.string.cancel, null).show()
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1154,11 +1365,17 @@ class BrowserActivity : AppCompatActivity() {
                     val container = binding.webContainers
                     val location = IntArray(2); container.getLocationOnScreen(location)
                     if (verticalSplit) {
-                        val relativeX = ev.rawX - location[0]
-                        adjustWeightsByVal((relativeX / container.width).coerceIn(0.05f, 0.95f))
+                        val denom = container.width
+                        if (denom > 0) {
+                            val relativeX = ev.rawX - location[0]
+                            adjustWeightsByVal((relativeX / denom).coerceIn(0.05f, 0.95f))
+                        }
                     } else {
-                        val relativeY = ev.rawY - location[1]
-                        adjustWeightsByVal((relativeY / container.height).coerceIn(0.05f, 0.95f))
+                        val denom = container.height
+                        if (denom > 0) {
+                            val relativeY = ev.rawY - location[1]
+                            adjustWeightsByVal((relativeY / denom).coerceIn(0.05f, 0.95f))
+                        }
                     }
                     true
                 }
@@ -1167,11 +1384,38 @@ class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    fun navigate(p: String) { try { loadUrl(JSONObject(p).getString("url")) } catch(e:Exception){} }
-    fun injectLayers(p: String) {}
-    fun goBack(p: String) { runOnUiThread { getWebViewForTab(activeTab).goBack() } }
-    fun reload(p: String) { runOnUiThread { getWebViewForTab(activeTab).reload() } }
-    fun setFallback(p: String) {}
+    // Bridge methods
+    fun navigate(payloadJson: String) {
+        try {
+            val json = JSONObject(payloadJson)
+            val url = json.optString("url")
+            if (url.isNotEmpty()) {
+                loadUrl(prepareUrl(url))
+            }
+        } catch (e: Exception) {
+            Log.e("BrowserActivity", "navigate error: ${e.message}")
+        }
+    }
+
+    fun injectLayers(payloadJson: String) {
+        // Implementation placeholder
+    }
+
+    fun goBack(payloadJson: String) {
+        getWebViewForTab(activeTab).goBack()
+    }
+
+    fun reload(payloadJson: String) {
+        getWebViewForTab(activeTab).reload()
+    }
+
+    fun toggleSplit(payloadJson: String) {
+        toggleSplit()
+    }
+
+    fun setFallback(payloadJson: String) {
+        // Implementation placeholder
+    }
 
     inner class TabsAdapter(
         private val list: List<TabItem>, 
@@ -1182,7 +1426,7 @@ class BrowserActivity : AppCompatActivity() {
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val tv = TextView(p.context).apply {
                 setPadding(20, 10, 20, 10); setBackgroundResource(android.R.drawable.btn_default)
-                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; maxWidth = 300
+                maxLines = 1; ellipsize = TextUtils.TruncateAt.END; maxWidth = 300
             }
             return VH(tv)
         }
@@ -1196,20 +1440,35 @@ class BrowserActivity : AppCompatActivity() {
     }
 
     inner class MenuShortcutAdapter(private val list: List<Shortcut>, val onExecute: (Shortcut) -> Unit, val onToggleEye: (Shortcut) -> Unit, val onLongClick: (Shortcut, Int) -> Unit) : RecyclerView.Adapter<MenuShortcutAdapter.VH>() {
-        inner class VH(v: View) : RecyclerView.ViewHolder(v) { val name: TextView = v.findViewById(android.R.id.text1); val eye: ImageButton = (v as LinearLayout).getChildAt(1) as ImageButton }
+        inner class VH(v: View, val icon: TextView, val name: TextView, val desc: TextView, val eye: ImageButton) : RecyclerView.ViewHolder(v)
+        
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
-            val layout = LinearLayout(p.context).apply {
-                orientation = LinearLayout.HORIZONTAL; setPadding(10, 10, 10, 10); gravity = android.view.Gravity.CENTER_VERTICAL
-                addView(TextView(p.context).apply { id = android.R.id.text1; layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-                addView(ImageButton(p.context).apply { layoutParams = ViewGroup.LayoutParams(100, 100); setBackgroundResource(0) })
+            val context = p.context
+            val iconView = TextView(context).apply { textSize = 24f; layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginEnd = 20 } }
+            val nameView = TextView(context).apply { textSize = 16f; setTypeface(null, Typeface.BOLD) }
+            val descView = TextView(context).apply { textSize = 12f; setTextColor(Color.GRAY); maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+            val eyeView = ImageButton(context).apply { layoutParams = ViewGroup.LayoutParams(100, 100); setBackgroundResource(0) }
+
+            val textLayout = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                addView(nameView); addView(descView)
             }
-            return VH(layout)
+            
+            val layout = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL; setPadding(20, 20, 20, 20); gravity = Gravity.CENTER_VERTICAL
+                addView(iconView); addView(textLayout); addView(eyeView)
+            }
+            return VH(layout, iconView, nameView, descView, eyeView)
         }
         override fun onBindViewHolder(h: VH, p: Int) {
-            val item = list[p]; h.name.text = if (item.isAutoRun) "[A] ${item.name}" else item.name
+            val item = list[p]
+            h.icon.text = item.icon
+            h.name.text = if (item.isAutoRun) getString(R.string.auto_run_format, item.name) else item.name
+            h.desc.text = item.description.ifEmpty { "Custom Script" }
             h.eye.setImageResource(if (item.isVisibleOnMain) android.R.drawable.ic_menu_view else android.R.drawable.ic_partial_secure)
-            h.name.setOnClickListener { onExecute(item) }
-            h.name.setOnLongClickListener { onLongClick(item, p); true }
+            
+            h.itemView.setOnClickListener { onExecute(item) }
+            h.itemView.setOnLongClickListener { onLongClick(item, p); true }
             h.eye.setOnClickListener { item.isVisibleOnMain = !item.isVisibleOnMain; onToggleEye(item) }
         }
         override fun getItemCount() = list.size
@@ -1223,7 +1482,11 @@ class BrowserActivity : AppCompatActivity() {
             val tv = TextView(p.context).apply { setPadding(30, 20, 30, 20); setBackgroundResource(android.R.drawable.btn_default) }
             return VH(tv)
         }
-        override fun onBindViewHolder(h: VH, p: Int) { val item = visibleList[p]; (h.itemView as TextView).text = item.name; h.itemView.setOnClickListener { onClick(item) } }
+        override fun onBindViewHolder(h: VH, p: Int) { 
+            val item = visibleList[p]
+            (h.itemView as TextView).text = getString(R.string.preset_format, item.icon, item.name)
+            h.itemView.setOnClickListener { onClick(item) } 
+        }
         override fun getItemCount() = visibleList.size
     }
 }
