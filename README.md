@@ -1,5 +1,7 @@
 # Goonee Browser 🚀
-
+<a href="https://github.com/P200p/GooneeBrowser/releases/tag/V3.0.0">
+  <img src="https://img.shields.io/badge/Download-APK-green?style=for-the-badge&logo=android" alt="Download APK">
+</a>
 [ภาษาไทยด้านล่าง]
 
 Goonee Browser is a high-performance Android browser built for everyone. Whether you're a power user or just someone who wants a smarter browsing experience, Goonee provides the tools you need—powered by AI.
